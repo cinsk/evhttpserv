@@ -1,0 +1,20 @@
+
+KCDB_CFLAGS:=`kcutilmgr conf -i`
+KCDB_LIBS:=`kcutilmgr conf -l`
+CFLAGS=-Wall -g3 $(KCDB_CFLAGS)
+LIBS=-lsqlite3 -lev $(KCDB_LIBS)
+
+OBJS=evbuf.o couchlite.o xerror.o xobstack.o
+
+all: couchlite
+rebuild: clean all
+
+$(OBJS): %.o: %.c %.h
+	$(CC) -c $(CFLAGS) $< -o $@
+
+couchlite: $(OBJS)
+	$(CC) $(CFLAGS) -o couchlite $(OBJS) $(LIBS)
+
+clean:
+	rm -f $(OBJS)
+	rm -f couchlite
