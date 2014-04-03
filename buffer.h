@@ -11,6 +11,11 @@ struct bufnode {
   char data[0];
 };
 
+typedef struct {
+  struct bufnode *node;
+  char *ptr;
+} bufpos;
+
 struct buffer {
   struct bufnode *head;
   struct bufnode *tail;
@@ -42,11 +47,19 @@ ssize_t buffer_fill_fd(struct buffer *b, int fd, size_t size);
 /*
  * Find SEED with SIZE byte(s) from the buffer contents.
  *
- * It returns the pointer to SEED, and DST is set to the target bufnode.
- * It returns NULL when SEED is not found.
+ * FROM should points the starting position for the searching.
+ * FROM as NULL means the beginning of the buffer.
+ *
+ * This function returns nonzero if SEED was found.  Otherwise it
+ * returns zero.
+ *
+ * If FOUND is non-null, it will be set to the location of the first SEED
+ * in the buffer on success.
  */
-char *buffer_find(struct buffer *buf, const void *seed, size_t size,
-                  struct bufnode **dst);
+int buffer_find(struct buffer *buf, const void *seed, size_t size,
+                bufpos *found, const bufpos *from);
+//char *buffer_find(struct buffer *buf, const void *seed, size_t size, struct bufnode **dst);
+
 
 /*
  * Advance the buffer position so that the beginning of the buffer

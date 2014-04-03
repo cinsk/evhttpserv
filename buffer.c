@@ -192,6 +192,122 @@ buffer_printf(struct buffer *b, const char *format, ...)
   return len;
 }
 
+/*
+ * TODO:
+ *
+ * bufpos buffer_find(struct buffer *buf, const void *seed, size_t size,
+ *                    bufpos from);
+ *
+ * int buffer_find(struct buffer *buf,
+ *                 const void *seed, size_t size,
+ *                 bufpos *found,
+ *                 const bufpos *from);
+ */
+int
+buffer_find(struct buffer *buf, const void *seed, size_t size,
+            bufpos *found, const bufpos *from_)
+{
+  struct bufnode *p, *q;
+  char *c;
+  bufpos from = { 0, 0 };
+
+  if (!buf->head)
+    return 0;
+
+  if (from_)
+    from = *from_;
+
+  if (!from.node) {
+    from.node = buf->head;
+    from.ptr = from.node->begin;
+  }
+
+  p = from.node;
+  q = p->next;
+  if (q)
+    memcpy(p->end, q->begin, size);
+  c = memmem(from.ptr, p->end - from.ptr + size, seed, size);
+  if (c) {
+    if (found) {
+      found->node = p;
+      found->ptr = c;
+    }
+    return 1;
+  }
+
+  for (p = p->next; p != NULL; p = p->next) {
+    q = p->next;
+
+    if (q)
+      memcpy(p->end, q->begin, size);
+
+    c = memmem(p->begin, p->end - p->begin + size, seed, size);
+    if (c) {
+      if (found) {
+        found->node = p;
+        found->ptr = c;
+      }
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+
+#if 0
+
+bufpos
+buffer_find(struct buffer *buf, const void *seed, size_t size,
+            const bufpos *from)
+{
+  struct bufnode *p, *q;
+  char *c;
+  bufpos pos = { 0, 0 };
+
+  assert(size < REARPAD_SIZE);
+
+  if (!buf->head)
+    return pos;
+
+  if (from)
+    pos = *from;
+
+  if (!pos.node) {
+    pos.node = buf->head;
+    pos.ptr = pos.node->begin;
+  }
+
+  p = pos.node;
+  q = p->next;
+  if (q)
+    memcpy(p->end, q->begin, size);
+  c = memmem(pos.ptr, p->end - pos.ptr + size, seed, size);
+  if (c) {
+    pos.node = p;
+    pos.ptr = c;
+    return pos;
+  }
+
+  for (p = p->next; p != NULL; p = p->next) {
+    q = p->next;
+
+    if (q)
+      memcpy(p->end, q->begin, size);
+
+    c = memmem(p->begin, p->end - p->begin + size, seed, size);
+    if (c) {
+      pos.node = p;
+      pos.ptr = c;
+      return pos;
+    }
+  }
+
+  pos.node = 0;
+  pos.ptr = 0;
+  return pos;
+}
+
 
 char *
 buffer_find(struct buffer *buf, const void *seed, size_t size,
@@ -216,6 +332,7 @@ buffer_find(struct buffer *buf, const void *seed, size_t size,
   }
   return 0;
 }
+#endif  /* 0 */
 
 
 void
@@ -531,12 +648,14 @@ main(int argc, char *argv[])
   printf("========================\n");
 
   {
-    struct bufnode *dst;
-    char *p = buffer_find(&b, "HD_OFFSET", 9, &dst);
+    bufpos from, found;
 
-    printf("buffer_find(): returns %p, dst[%p]\n", p, dst);
-    if (p)
-      buffer_advance(&b, dst, p, 9);
+    if (buffer_find(&b, "HD_OFFSET", 9, &found, NULL)) {
+      printf("buffer_find(): found(node[%p], ptr[%p])\n",
+             found.node, found.ptr);
+
+      buffer_advance(&b, found.node, found.ptr, 9);
+    }
   }
 
   buffer_flush(&b, NULL, NULL, STDOUT_FILENO);
