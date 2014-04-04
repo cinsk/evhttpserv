@@ -21,7 +21,7 @@ struct buffer {
   struct bufnode *tail;
 
   size_t nbuf;
-  size_t size;                  /* TODO */
+
   size_t sizehint;
 };
 
@@ -84,8 +84,11 @@ void buffer_advance(struct buffer *b, struct bufnode *n,
  *
  * The target location is stored in POS.
  *
- * Currently, unless B is empty, it always succeeds with nonzero
- * return value.
+ * On error, buffer_seek() returns -1.  On success, it returns the
+ * remaining bytes that it would advance if the buffer has more
+ * contents.  For example, if the total number of bytes in the buffer
+ * is 40, and you called buffer_seek(b, 50, SEEK_SET), then it will
+ * return 10.
  */
 int buffer_seek(struct buffer *b, off_t offset, int whence, bufpos *pos);
 

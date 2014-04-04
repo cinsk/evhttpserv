@@ -443,7 +443,7 @@ buffer_seek(struct buffer *b, off_t offset, int whence, bufpos *pos)
   assert(pos != 0);
 
   if (!b->head)
-    return 0;
+    return -1;
 
   switch (whence) {
   case SEEK_CUR:
@@ -461,7 +461,6 @@ buffer_seek(struct buffer *b, off_t offset, int whence, bufpos *pos)
     abort();
   }
 
-
   while (p.node) {
     sz = p.node->end - p.ptr;
 
@@ -474,7 +473,7 @@ buffer_seek(struct buffer *b, off_t offset, int whence, bufpos *pos)
       else {
         p.ptr = p.node->end;
         *pos = p;
-        return 1;
+        return offset;
       }
     }
     else {
@@ -486,10 +485,10 @@ buffer_seek(struct buffer *b, off_t offset, int whence, bufpos *pos)
       }
       else
         *pos = p;
-      return 1;
+      return 0;
     }
   }
-  return 0;
+  return offset;
 }
 
 
@@ -708,6 +707,7 @@ set_nonblock(int fd)
   return 0;
 }
 
+
 int
 main(int argc, char *argv[])
 {
@@ -721,10 +721,14 @@ main(int argc, char *argv[])
     return 1;
   }
 #endif  /* 0 */
-  set_nonblock(0);
-  set_nonblock(1);
 
   setvbuf(stdout, NULL, _IONBF, 0);
+
+  set_nonblock(0);
+
+  /* Don't know why, but if I set STDOUT_FILENO to non-blocking in OSX,
+   * the shell that execute this program logout prematurely. */
+  //set_nonblock(1);
 
   buffer_init(&b, 64);
   buffer_fill_fd(&b, 0, -1);
@@ -734,7 +738,7 @@ main(int argc, char *argv[])
   printf("========================\n");
 
   {
-    bufpos from, found;
+    bufpos found;
 
     {
       bufpos pos;
