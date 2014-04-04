@@ -21,7 +21,7 @@ struct buffer {
   struct bufnode *tail;
 
   size_t nbuf;
-
+  size_t size;                  /* TODO */
   size_t sizehint;
 };
 
@@ -77,6 +77,24 @@ int buffer_find(struct buffer *buf, const void *seed, size_t size,
  */
 void buffer_advance(struct buffer *b, struct bufnode *n,
                     char *next, int offset);
+
+
+/*
+ * Get the position of the buffer like lseek(2).
+ *
+ * The target location is stored in POS.
+ *
+ * Currently, unless B is empty, it always succeeds with nonzero
+ * return value.
+ */
+int buffer_seek(struct buffer *b, off_t offset, int whence, bufpos *pos);
+
+/*
+ * Return the number of byte(s) that the buffer B holds.
+ *
+ * If POS is non-null, the counting starts from POS.
+ */
+size_t buffer_size(struct buffer *b, const bufpos *pos);
 
 /*
  * Flush (write) the buffer contents into the file FD.
@@ -159,6 +177,10 @@ buffer_fill(struct buffer *b, const void *data, size_t size)
 
 #if 0
 /* TODO */
+// return the number of byte(s) in B from POS to end of the buffer.
+// If POS is NULL, the beginning of the buffer is used.
+size_t buffer_size(struct buffer *b, const bufpos *pos);
+
 ssize_t buffer_flush(struct buffer *b, int fd);
 buffer_getc();
 

@@ -432,6 +432,92 @@ buffer_flush(struct buffer *b, struct bufnode *n, char *next, int fd)
 
 // void
 // buffer_advance(struct buffer *b, struct bufnode *n, char *next, int offset)
+int
+buffer_seek(struct buffer *b, off_t offset, int whence, bufpos *pos)
+{
+  // whence := (SEEK_SET|SEEK_CUR|SEEK_END)
+  size_t sz;
+  bufpos p;
+
+  /* TODO: review the code.  I smell fishy. */
+  assert(pos != 0);
+
+  if (!b->head)
+    return 0;
+
+  switch (whence) {
+  case SEEK_CUR:
+    p = *pos;
+    break;
+  case SEEK_SET:
+    p.node = b->head;
+    p.ptr = p.node->begin;
+    break;
+  case SEEK_END:
+    p.node = b->tail;
+    p.ptr = p.node->end;
+    break;
+  default:
+    abort();
+  }
+
+
+  while (p.node) {
+    sz = p.node->end - p.ptr;
+
+    if (offset > sz) {
+      if (p.node->next) {
+        p.node = p.node->next;
+        p.ptr = p.node->begin;
+        offset -= sz;
+      }
+      else {
+        p.ptr = p.node->end;
+        *pos = p;
+        return 1;
+      }
+    }
+    else {
+      p.ptr += offset;
+      if (p.ptr == p.node->end && p.node->next) {
+        p.node = p.node->next;
+        p.ptr = p.node->begin;
+        *pos = p;
+      }
+      else
+        *pos = p;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+
+size_t
+buffer_size(struct buffer *b, const bufpos *pos)
+{
+  size_t total = 0;
+  bufpos p;
+  struct bufnode *bp;
+
+  if (!b->head)
+    return 0;
+
+  if (pos)
+    p = *pos;
+  else {
+    p.node = b->head;
+    p.ptr = p.node->begin;
+  }
+
+  total = p.node->end - p.ptr;
+
+  for (bp = p.node->next; bp != NULL; bp = bp->next) {
+    total += bp->end - bp->begin;
+  }
+
+  return total;
+}
 
 
 void
@@ -650,12 +736,33 @@ main(int argc, char *argv[])
   {
     bufpos from, found;
 
+    {
+      bufpos pos;
+
+      buffer_seek(&b, 0, SEEK_SET, &pos);
+      printf("pos.node = %p, pos.ptr = %p\n", pos.node, pos.ptr);
+      buffer_seek(&b, 160, SEEK_CUR, &pos);
+      printf("pos.node = %p, pos.ptr = %p\n", pos.node, pos.ptr);
+      buffer_seek(&b, 10, SEEK_END, &pos);
+      printf("pos.node = %p, pos.ptr = %p\n", pos.node, pos.ptr);
+    }
+
     if (buffer_find(&b, "HD_OFFSET", 9, &found, NULL)) {
       printf("buffer_find(): found(node[%p], ptr[%p])\n",
              found.node, found.ptr);
 
       buffer_advance(&b, found.node, found.ptr, 9);
     }
+  }
+
+  {
+    bufpos pos;
+    buffer_seek(&b, 0, SEEK_END, &pos);
+    printf("pos.node = %p, pos.ptr = %p\n", pos.node, pos.ptr);
+    buffer_seek(&b, 1, SEEK_CUR, &pos);
+    printf("pos.node = %p, pos.ptr = %p\n", pos.node, pos.ptr);
+    buffer_seek(&b, 10, SEEK_SET, &pos);
+    printf("pos.node = %p, pos.ptr = %p\n", pos.node, pos.ptr);
   }
 
   buffer_flush(&b, NULL, NULL, STDOUT_FILENO);
@@ -666,4 +773,4 @@ main(int argc, char *argv[])
   buffer_dump(stderr, &b);
   return 0;
 }
-#endif
+#endif  /* TEST_BUFFER */
