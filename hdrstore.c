@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdio.h>
 
+#include "buffer.h"
 #include "hdrstore.h"
 
 struct statuscode_pair {
@@ -54,6 +55,7 @@ statuscode_cmp(const void *l, const void *r)
   struct statuscode_pair *rhs = (struct statuscode_pair *)r;
   return lhs->code - rhs->code;
 }
+
 
 const char *
 statuscode2str(int statuscode)
@@ -111,23 +113,25 @@ hdrstore_set(struct hdrstore *store,
 }
 
 
-struct header *
+const char *
 hdrstore_get(struct hdrstore *store, const char *key)
 {
   struct header *h;
   HASH_FIND_STR(store->root, key, h);
-  return h;
+  return h->value;
 }
 
 
 int
-hdrstore_fill(struct hdrstore *store, struct xobs *opool, int status_code)
+hdrstore_fill(struct hdrstore *store, struct xobs *opool,
+              const char *version, int status_code)
 {
   struct header *hp, *tmp;
   int count = 0;
 
-  xobs_sprintf(opool, "HTTP/1.1 %u %s\r\n", status_code,
-               statuscode2str(status_code));
+  if (status_code > 0)
+    xobs_sprintf(opool, "%s %u %s\r\n", version, status_code,
+                 statuscode2str(status_code));
 
   HASH_ITER(hh, store->root, hp, tmp) {
     if (!hp->value)
@@ -189,6 +193,20 @@ hdrstore_load(struct hdrstore *store, char *buf, size_t size)
   return buf + size;
 }
 
+
+#if 0
+int
+hdrstore_load(struct hdrstore *store, struct buffer *buf, bufpos *end)
+{
+  if (buf->head == end.node) {
+    /* we're lucky! we've request line and request headers in the same bufnode. */
+
+  }
+  else {
+
+  }
+}
+#endif  /* 0 */
 
 #ifdef TEST_HDRS
 int

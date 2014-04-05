@@ -6,6 +6,7 @@
 
 
 typedef enum {
+  HTTP_INIT = 0,                /* initialized for responding */
   HTTP_CONTINUE = 100,
   HTTP_SWITCH,
   HTTP_OK = 200,
@@ -62,9 +63,22 @@ void hdrstore_init(struct hdrstore *store, struct xobs *pool);
 void hdrstore_free(struct hdrstore *store);
 int hdrstore_set(struct hdrstore *store,
                  const char *key, const char *value);
-struct header *hdrstore_get(struct hdrstore *store, const char *key);
-int hdrstore_fill(struct hdrstore *store, struct xobs *opool, int status_code);
-char *hdrstore_load(struct hdrstore *store, char *buf, size_t size);
+const char *hdrstore_get(struct hdrstore *store, const char *key);
 
+/*
+ * Fill OPOOL with HTTP response line and response headers.
+ *
+ * If STATUS_CODE is not positive, response line will not be
+ * generated.  Generated contents are stored in OPOOL as a growing
+ * object, so that you can get the pointer and size using xobs_base()
+ * and xobs_object_size().
+ *
+ * This function returns the number of headers that it generated.
+ */
+int hdrstore_fill(struct hdrstore *store, struct xobs *opool,
+                  const char *version, int status_code);
+// char *hdrstore_load(struct hdrstore *store, char *buf, size_t size);
+
+const char *statuscode2str(int statuscode);
 
 #endif /* HDRSTORE_H__ */
