@@ -10,7 +10,9 @@
 
 #include "buffer.h"
 #include "hexdump.h"
+#include "xobstack.h"
 
+/* BACKPAD will be used for storing chunk size when TE is 'chunked' */
 #define BACKPAD_SIZE    16
 #define REARPAD_SIZE    16
 
@@ -377,6 +379,40 @@ buffer_advance(struct buffer *b, struct bufnode *n, char *next, int offset)
   }
 }
 
+
+// copy the contents from the beginning of the buffer to POS into the OBS
+// as a growing object.
+size_t
+buffer_copy(struct xobs *obs, struct buffer *b, const bufpos *pos)
+{
+  struct bufnode *p;
+  bufpos pos_;
+  size_t total = 0;
+  size_t sz;
+
+  // assert(xobstack_object_size(obs) == 0);
+
+  if (!pos) {
+    pos_.node = b->tail;
+    pos_.ptr = pos_.node->end;
+    pos = &pos_;
+  }
+
+  for (p = b->head; p != NULL; p = p->next) {
+    if (p != pos->node) {        /* copy the whole content of bufnode to OBS */
+      sz = p->end - p->begin;
+      xobs_grow(obs, p->begin, sz);
+      total += sz;
+    }
+    else {
+      sz = pos->ptr - p->end;
+      xobs_grow(obs, p->begin, sz);
+      total += sz;
+      break;
+    }
+  }
+  return total;
+}
 
 ssize_t
 buffer_flush(struct buffer *b, struct bufnode *n, char *next, int fd)

@@ -3,6 +3,8 @@
 
 #include <string.h>
 
+struct xobs;                    /* forward declaration */
+
 struct bufnode {
   char *begin, *end;
   char *last;
@@ -28,6 +30,7 @@ struct buffer {
 #define BUFNODE_AVAIL(n)        ((n)->data + (n)->size - (n)->end)
 
 void buffer_init(struct buffer *b, size_t sizehint);
+void buffer_clear(struct buffer *b);
 
 /*
  * Append data from FD with SIZE byte(s) in the buffer, B.
@@ -103,7 +106,7 @@ size_t buffer_size(struct buffer *b, const bufpos *pos);
  * Flush (write) the buffer contents into the file FD.
  *
  * It will write the contents from the beginning of the buffer to the
- * point NEXT in the bufnode N.  If N is NULL, the first BUFNODE in
+ * point NEXT in the bufnode N.  If N is NULL, the last BUFNODE in
  * the B is used as a default.  If NEXT is NULL, it is assumes that
  * the end of the N.  To write the whole contents of B into FD, you
  * may pass NULL for both of N and NEXT.
@@ -137,6 +140,17 @@ ssize_t buffer_flush(struct buffer *b, struct bufnode *n, char *next, int fd);
 int buffer_printf(struct buffer *b, const char *format, ...)
   __attribute__((format (printf, 2, 3)));
 
+
+/* Copy the contents of the buffer between the beginning of the buffer
+ * to POS into OBS as a growing object.  If POS is NULL, it is
+ * considered as the end of the buffer.
+ *
+ * It returns the number of byte(s) copied. */
+size_t buffer_copy(struct xobs *obs, struct buffer *b, const bufpos *pos);
+
+#define buffer_isempty(b)       ((b)->head == 0 || \
+                                 ((b)->head == (b)->tail && \
+                                  (b)->tail->begin >= (b)->tail->end))
 
 /* Return the number of availabe byte(s) that a buffer can hold without
  * allocating additional bufnode. */
