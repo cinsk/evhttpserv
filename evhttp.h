@@ -6,6 +6,7 @@
 
 #include "xobstack.h"
 #include "hdrstore.h"
+#include "buffer.h"
 
 enum HTTP_METHOD {
   HM_NONE,
@@ -31,14 +32,32 @@ struct ev_httpconn;
  * timeout event just for this time.
  *
  * When REVENTS contains EV_READ, it means that a complete HTTP
- * request is ready to serve.  The user need to fill w->rsp_hdrs with
- * reponse headers, and w->rsp_pool with response body as a growing
- * object.  If the user cannot provide the complete response body,
- * then the user need to fill it as much as he/she can, then return
- * from the callback with nonzero value.  If the callback returns
- * with zero, it means that the response body is complete.
+ * request is ready to serve.  The user need to fill w->rsp_code with
+ * the status code, w->rsp_hdrs with response headers, and w->obuf
+ * with the response body.  If the user cannot provide the complete
+ * response body, then the user need to fill it as much as he/she can,
+ * then return from the callback with nonzero value.  If the callback
+ * returns with zero, it means that the response body is completed.
+ *
+ * How to receive the response body:
+ *
+ *   If EOB is nonzero, then the whole request body is stored in
+ *   w->ibuf.  If EOB is zero, then the partial request body is stored
+ *   in w->ibuf.  In either case, the callback must read(consume) the
+ *   contents in w->ibuf.  The callback need to just read the
+ *   contents, since the buffer contents in w->ibuf will be
+ *   automatically released.  If w->body_chnk is zero, it means that
+ *   the response body is being transfered in identity encoding (as
+ *   is, no transformation).
+ *
+ *   You may read w->body_chnk to determine whether the chunked
+ *   transfer encoding is in effect.  Although I don't think that the
+ *   callback need it.  Currently, as the callback's point of view,
+ *   w->body_size and w->body_rest may be useless, since they will be
+ *   updated after the callback is called.
  */
 typedef int (*http_callback)(struct ev_loop *loop, struct ev_httpconn *w,
+                             int eob,
                              int revents);
 
 /*
@@ -61,7 +80,89 @@ typedef int (*http_callback)(struct ev_loop *loop, struct ev_httpconn *w,
   };
  */
 
+#define HTTP_TE_MAX             4
+
+#define HTTP_TE_NONE            0
+#define HTTP_TE_IDENTITY        1
+#define HTTP_TE_CHUNKED         2
+#define HTTP_TE_GZIP            3
+#define HTTP_TE_COMPRESS        4
+#define HTTP_TE_DEFLATE         5
+#define HTTP_TE_UNKNOWN         100
+
+struct ev_http;
+
+typedef enum {
+  HC_INIT,
+  HC_RECV_REQ,
+  HC_RECV_BODY,
+  HC_SEND_RSP,
+  HC_SEND_BODY,
+} HC_STATE;
+
 struct ev_httpconn {
+  ev_io io;
+  ev_timer timer;
+
+  ev_tstamp r_timeout;
+  ev_tstamp w_timeout;
+
+  ev_tstamp acc_time;
+
+  struct ev_http *http;
+
+  HC_STATE state;
+
+  struct xobs hdr_pool; /* 1. keys and values from req_hdrs and rsp_hdrs.
+                         * 2. if STATE is HC_SEND_RSP, this will contains
+                         *    a growing object, which contains all headers
+                         *    from rsp_hdrs. */
+
+  char *hdr_pool_reset;         /* xobs_free()ing this one makes the
+                                 * hdr_pool clean. */
+
+  struct hdrstore req_hdrs;
+
+  HTTP_METHOD method;
+  char *method_string;
+  char *uri;
+  char *version;
+
+  char req_te[HTTP_TE_MAX];
+
+  /* When STATE is HC_RECV_BODY,
+   * these three members (body_*) record the state of the receiving of
+   * request body.  If BODY_CHNK is nonzero, it means that the TE of
+   * current request body is 'chunked'.  BODY_SIZE is the size of the
+   * current chunk, BODY_REST is the remaining bytes to complete the
+   * current chunk.  If BODY_CHNK is zero (i.e. TE is 'identity'),
+   * both BODY_SIZE and BODY_REST contain values of the whole body.
+   *
+   * When STATE is HC_SEND_RSP,
+   * BODY_SIZE will contains the size of the RSP_LINE_HDRS, and
+   * BODY_REST will contains the remaining bytes of RSP_LINE_HDRS
+   * that is not sent yet.  The not-sent-part can be obtained
+   * as RSP_LINE_HDRS[BODY_SIZE - BODY_REST] ... RSP_LINE_HDRS[BODY_SIZE] */
+  ssize_t body_size;
+  ssize_t body_rest;
+  int     body_chnk;
+
+  struct buffer ibuf;
+
+  struct hdrstore rsp_hdrs;
+  int rsp_code;
+  int rsp_disconnect; /* if nonzero, the connection will be disconnected */
+
+  char *rsp_line_hdrs;          /* points the buffer that contains
+                                 * response line and response headers
+                                 * allocated from HDR_POOL. */
+
+  struct buffer obuf;           /* contains response body */
+  int eob;                      /* nonzero means that end of response body. */
+};
+typedef struct ev_httpconn ev_httpconn;
+
+struct ev_httpconnOLD {
   ev_io io;
   ev_timer timer;
 
@@ -150,13 +251,21 @@ struct ev_httpconn {
 
   size_t inbuf_size;
   char inbuf[0];
+
+  ssize_t body_size;           /* size of the current body or chunk */
+  ssize_t body_rest; /* size of remaining bytes of the body or chunk */
+  int chunked;       /* if nonzero, body_size and body_rest are for
+                        the current chunk */
 };
-typedef struct ev_httpconn ev_httpconn;
+typedef struct ev_httpconn ev_httpconnOLD;
 
 struct ev_http {
   ev_io io;
   char address[INET_ADDRSTRLEN];
   int port;
+
+  int obufsize;
+  int ibufsize;
 
   http_callback cb;
 };

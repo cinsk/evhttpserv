@@ -7,7 +7,7 @@ KCDB_LIBS:=`kcutilmgr conf -l`
 CFLAGS=-Wall -g3
 LIBS=-lev
 
-OBJS=evhttp.o xerror.o xobstack.o hdrstore.o
+OBJS=evhttp.o xerror.o xobstack.o hdrstore.o buffer.o hexdump.o
 
 all: evhttp
 rebuild: clean all

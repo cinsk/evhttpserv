@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-int hexdump(FILE *fp, int unitsize, off_t offset, const void *begin, const void *end);
+int hexdump(FILE *fp, int unitsize,
+            off_t offset, const void *begin, const void *end);
 
 #endif /* HEXDUMP_H__ */

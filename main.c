@@ -7,7 +7,7 @@
 int debug_mode = 1;
 
 int
-my_callback(struct ev_loop *loop, struct ev_httpconn *w, int revents)
+my_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
 {
   xdebug(0, "my_callback (revents: %08x)", revents);
 
@@ -15,15 +15,12 @@ my_callback(struct ev_loop *loop, struct ev_httpconn *w, int revents)
     return 0;
 
   else if (revents & EV_READ) {
-    /* For debugging, just copy the request into the response */
-    char *v = xobs_alloc(&w->rsp_pool, 30);
-
     w->rsp_code = 200;
     xdebug(0, "Request(%s): %s", w->method_string, w->uri);
-    xobs_sprintf(&w->rsp_pool, "<html><body>hello</body></html>");
 
-    sprintf(v, "%u", xobs_object_size(&w->rsp_pool));
-    hdrstore_set(&w->rsp_hdrs, "Content-Length", v);
+    buffer_printf(&w->obuf, "<html><body>hello</body></html>");
+    // sprintf(v, "%u", xobs_object_size(&w->rsp_pool));
+    // hdrstore_set(&w->rsp_hdrs, "Content-Length", v);
     hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive");
   }
 
@@ -40,6 +37,7 @@ main(int argc, char *argv[])
   xerror_init(0, 0);
 
   xdebug(0, "sizeof ev_httpconn: %zd", sizeof(struct ev_httpconn));
+  // xdebug(0, "sizeof ev_httpconn2: %zd", sizeof(struct ev_httpconn2));
 
   {
     struct sigaction sig;
