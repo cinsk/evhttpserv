@@ -44,7 +44,7 @@ void buffer_clear(struct buffer *b);
  * signaled, it returns zero with 'errno' set to EINTR.  Otherwise (on
  * error) it returns -1.
  */
-ssize_t buffer_fill_fd(struct buffer *b, int fd, size_t size);
+ssize_t buffer_fill_fd(struct buffer *b, int fd, size_t size, int *eof);
 
 
 /*

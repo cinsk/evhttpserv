@@ -123,7 +123,7 @@ buffer_grow_capacity(struct buffer *b, size_t size)
 
 
 ssize_t
-buffer_fill_fd(struct buffer *b, int fd, size_t size)
+buffer_fill_fd(struct buffer *b, int fd, size_t size, int *eof)
 {
   /* Design consideration
    *
@@ -150,13 +150,15 @@ buffer_fill_fd(struct buffer *b, int fd, size_t size)
 
     readch = read(fd, nptr->end, remains);
     if (readch == -1) {
+      *eof = 0;
       if (errno == EINTR || errno == EAGAIN)
         return total;
       else
         return -1;
     }
     else if (readch == 0) {            /* EOF */
-      errno = 0;                       /* Is this necessary? */
+      if (*eof)
+        *eof = 1;
       return total;
     }
 
@@ -166,6 +168,7 @@ buffer_fill_fd(struct buffer *b, int fd, size_t size)
     if (total >= size)
       break;
   }
+  *eof = 0;
   return total;
 }
 
@@ -405,7 +408,7 @@ buffer_copy(struct xobs *obs, struct buffer *b, const bufpos *pos)
       total += sz;
     }
     else {
-      sz = pos->ptr - p->end;
+      sz = pos->ptr - p->begin;
       xobs_grow(obs, p->begin, sz);
       total += sz;
       break;
