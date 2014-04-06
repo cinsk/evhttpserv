@@ -60,7 +60,7 @@ struct hdrstore {
 };
 
 void hdrstore_init(struct hdrstore *store, struct xobs *pool);
-void hdrstore_free(struct hdrstore *store);
+void hdrstore_free(struct hdrstore *store, int reset_only);
 int hdrstore_set(struct hdrstore *store,
                  const char *key, const char *value);
 const char *hdrstore_get(struct hdrstore *store, const char *key);
