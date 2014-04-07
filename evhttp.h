@@ -26,10 +26,11 @@ typedef enum HTTP_METHOD HTTP_METHOD;
 
 struct ev_httpconn;
 /*
- * When REVENTS contains EV_TIMER, it means that timeout occurred.
- * if the user returns zero, it means that user wants to let HTTP module
- * release the connection.  If not (nonzero), HTTP module will ignore the
- * timeout event just for this time.
+ * When REVENTS contains EV_TIMER, it means that timeout occurred.  if
+ * the user returns zero, it means that user wants to let HTTP module
+ * release the connection.  If not (nonzero), HTTP module will ignore
+ * the timeout event just for this time.  Note that EOB is undefined
+ * on EV_TIMER.
  *
  * When REVENTS contains EV_READ, it means that a complete HTTP
  * request is ready to serve.  The user need to fill w->rsp_code with

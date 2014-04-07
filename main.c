@@ -2,9 +2,12 @@
 #include <errno.h>
 
 #include "evhttp.h"
+#include "xobstack.h"
 #include "xerror.h"
 
 int debug_mode = 1;
+
+struct xobs pool;
 
 int
 my_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
@@ -16,12 +19,26 @@ my_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
 
   else if (revents & EV_READ) {
     w->rsp_code = 200;
-    xdebug(0, "Request(%s): %s", w->method_string, w->uri);
+    xdebug(0, "Request(%s, %s): %s", w->method_string, w->version, w->uri);
 
-    buffer_printf(&w->obuf, "<html><body>hello</body></html>");
+#if 1
+    {
+      char *hdrs;
+      hdrstore_fill(&w->req_hdrs, &pool, NULL, 0);
+      xobs_1grow(&pool, '\0');
+      hdrs = xobs_finish(&pool);
+      fputs(hdrs, stderr);
+      xobs_free(&pool, hdrs);
+    }
+#endif
+
+    buffer_printf(&w->obuf, "<html><body>hello</body></html>\n");
     // sprintf(v, "%u", xobs_object_size(&w->rsp_pool));
     // hdrstore_set(&w->rsp_hdrs, "Content-Length", v);
     hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive");
+
+    xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
+    hdrstore_set(&w->rsp_hdrs, "Content-Length", xobs_finish(&w->hdr_pool));
   }
 
   return 0;
@@ -39,6 +56,14 @@ main(int argc, char *argv[])
   xdebug(0, "sizeof ev_httpconn: %zd", sizeof(struct ev_httpconn));
   // xdebug(0, "sizeof ev_httpconn2: %zd", sizeof(struct ev_httpconn2));
 
+
+  if (argc != 2) {
+    fprintf(stderr, "usage: %s port\n", argv[0]);
+    return 1;
+  }
+
+  xobs_init(&pool);
+
   {
     struct sigaction sig;
     sigemptyset(&sig.sa_mask);
@@ -46,10 +71,11 @@ main(int argc, char *argv[])
     sig.sa_handler = SIG_IGN;
     if (sigaction(SIGPIPE, &sig, NULL) != 0)
       xdebug(errno, "sigaction failed");
+    signal(SIGPIPE, SIG_IGN);
   }
 
 
-  ev_http_init(&http, my_callback, "0.0.0.0", 8080);
+  ev_http_init(&http, my_callback, "0.0.0.0", atoi(argv[1]));
 
   ev_http_start(loop, &http);
 

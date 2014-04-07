@@ -127,6 +127,15 @@ ev_http_init(ev_http *http, http_callback cb, char *address, int port)
   http->cb = cb;
 
   fd = tcp_listen(address, port, O_NONBLOCK);
+  {
+    /* TODO: is FD non-blocking?? */
+    int sflag;
+
+    if ((sflag = fcntl(fd, F_GETFL)) == -1)
+      xerror(0, errno, "fcntl failed");
+    xdebug(0, "fd(%d) is %sBLOCKING", fd, (sflag & O_NONBLOCK) ? "NON-" : "");
+  }
+
   if (fd == -1) {
     xdebug(errno, "tcp_listen(%s, %d) failed", address, port);
     return -1;
@@ -190,8 +199,8 @@ ev_httpconn_init(ev_httpconn *hc, ev_http *http, int fd,
 {
   ev_io_init(&hc->io, ev_httpconn_read_cb, fd, EV_READ);
 
-  hc->r_timeout = 5;
-  hc->w_timeout = 5;
+  hc->r_timeout = 10;
+  hc->w_timeout = 10;
 
   ev_timer_init(&hc->timer, ev_httpconn_timer_cb,
                 hc->r_timeout, hc->r_timeout);
@@ -403,9 +412,10 @@ ev_http_io_cb(struct ev_loop *loop, ev_io *w, int revents)
     int sflag;
 
     if ((sflag = fcntl(fd, F_GETFL)) == -1)
-      xerror(0, errno, "fcntl failed");
-    if (sflag & O_NONBLOCK)
-      xdebug(0, "fd(%d) is %sBLOCKING", fd, (sflag & O_NONBLOCK) ? "NON-" : "");
+      xerror(1, errno, "fcntl failed");
+
+    if (fcntl(fd, F_SETFL, sflag | O_NONBLOCK) == -1)
+      xerror(1, errno, "fcntl failed");
   }
 #endif
 
@@ -452,7 +462,7 @@ shift_inbuf(ev_httpconn *hc)
 #endif
 
 static __inline__ void
-ev_httpconn_reset(struct ev_httpconn *hc)
+ev_httpconn_reset(struct ev_httpconn *hc, int clear_ibuf)
 {
   /* TODO: do I need to call ev_clear_pending()? */
 
@@ -469,7 +479,8 @@ ev_httpconn_reset(struct ev_httpconn *hc)
   hc->body_rest = -1;
   hc->body_chnk = 0;
 
-  buffer_clear(&hc->ibuf);
+  if (clear_ibuf)
+    buffer_clear(&hc->ibuf);
 
   hc->rsp_code = 0;
   hc->rsp_disconnect = 0;
@@ -512,7 +523,9 @@ ev_httpconn_toggle_readwrite(struct ev_loop *loop, ev_httpconn *hc)
   else {
     if (hc->state == HC_RECV_REQ) {
       /* TODO: reset httpconn to the initial state!!! */
-      ev_httpconn_reset(hc);
+      ev_httpconn_reset(hc, 0);
+      if (buffer_size(&hc->ibuf, NULL) > 0)
+        ev_feed_event(loop, &hc->io, EV_READ | EV_CUSTOM);
     }
     else
       abort();
@@ -1153,6 +1166,17 @@ load_req_line_headers(ev_httpconn *hc, char *req)
     else
       hdrstore_set(&hc->req_hdrs, name, value);
   }
+
+  {
+    const char *val;
+
+    val = hdrstore_get(&hc->req_hdrs, "Connection");
+    if (val && strcmp(val, "close") == 0)
+        hc->rsp_disconnect = 1;
+    else if (strcmp(hc->version, "HTTP/1.0") == 0)
+        hc->rsp_disconnect = 1;
+  }
+
   return 1;
 
  reqline_err:
@@ -1211,7 +1235,10 @@ ev_httpconn_read_cb(struct ev_loop *loop, ev_io *w, int revents)
       return;
     }
     else if (eof) {
-      xdebug(0, "premature EOF");
+#ifndef NDEBUG
+      if (buffer_size(&hc->ibuf, NULL) > 0)
+        xdebug(0, "premature EOF");
+#endif
       ev_httpconn_stop(loop, hc);
       return;
     }
@@ -1438,6 +1465,25 @@ ev_httpconnOLD_read_cb(struct ev_loop *loop, ev_io *w, int revents)
 static void
 ev_httpconn_timer_cb(struct ev_loop *loop, ev_timer *w, int revents)
 {
+  ev_httpconn *hc = (ev_httpconn *)(((char *)w) - offsetof(ev_httpconn, timer));
+  ev_tstamp after = hc->acc_time - ev_now(loop) +
+    ((hc->io.events & EV_READ) ? hc->r_timeout : hc->w_timeout);
+
+  if (after < 0.) {             /* timeout occurred */
+    /* TODO: now what? */
+    xdebug(0, "%c_timeout for fd %d",
+           ((hc->io.events & EV_READ) ? 'r' : 'w'), hc->io.fd);
+
+    if (!hc->http->cb(loop, hc, 0, EV_TIMER)) {
+      /* The user agreed to release the connection */
+      xdebug(0, "close the connection (reason = timeout)");
+      ev_httpconn_stop(loop, hc);
+      return;
+    }
+  }
+  ev_timer_set(&hc->timer, after, 0);
+  ev_timer_start(loop, w);
+
 }
 
 #if 0

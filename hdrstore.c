@@ -122,7 +122,10 @@ hdrstore_get(struct hdrstore *store, const char *key)
 {
   struct header *h;
   HASH_FIND_STR(store->root, key, h);
-  return h->value;
+  if (h)
+    return h->value;
+  else
+    return NULL;
 }
 
 
