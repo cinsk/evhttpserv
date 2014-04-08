@@ -119,7 +119,7 @@ get_te(ev_httpconn *hc, int index)
 
 
 int
-ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd)
+ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd, size_t *refcount)
 {
   ev_io_init(&hc->io, ev_httpconn_read_cb, fd, EV_READ);
 
@@ -159,6 +159,8 @@ ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd)
   buffer_init(&hc->obuf, http->obufsize);
   hc->eob = 0;
 
+  hc->refcnt = refcount;
+
   return 1;
 }
 
@@ -170,18 +172,17 @@ ev_httpconn_start(struct ev_loop *loop, ev_httpconn *hc)
   ev_io_start(loop, &hc->io);
   ev_timer_start(loop, &hc->timer);
 
-  hc->http->nclients++;
+  (*hc->refcnt)++;
 }
 
 void
 ev_httpconn_stop(struct ev_loop *loop, ev_httpconn *hc)
 {
   xdebug(0, "ev_httpconn_stop for fd(%d)", hc->io.fd);
+  if (close(hc->io.fd) == -1)
+    xdebug(errno, "close(2) failed on httpconn(%d)", hc->io.fd);
   ev_io_stop(loop, &hc->io);
   ev_timer_stop(loop, &hc->timer);
-
-  if (close(hc->io.fd) == -1)
-    xdebug(errno, "close(%d) failed", hc->io.fd);
 
   hdrstore_free(&hc->rsp_hdrs, 1);
   hdrstore_free(&hc->req_hdrs, 1);
@@ -197,9 +198,9 @@ ev_httpconn_stop(struct ev_loop *loop, ev_httpconn *hc)
 
   /* TODO: do I call some callback from user-side? */
 
-  free(hc);
+  (*hc->refcnt)--;
 
-  hc->http->nclients--;
+  free(hc);
 }
 
 

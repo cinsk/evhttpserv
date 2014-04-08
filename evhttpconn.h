@@ -101,10 +101,12 @@ struct ev_httpconn {
 
   struct buffer obuf;           /* contains response body */
   int eob;                      /* nonzero means that end of response body. */
+
+  size_t *refcnt;
 };
 typedef struct ev_httpconn ev_httpconn;
 
-int ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd);
+int ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd, size_t *refcount);
 void ev_httpconn_start(struct ev_loop *loop, ev_httpconn *hc);
 void ev_httpconn_stop(struct ev_loop *loop, ev_httpconn *hc);
 

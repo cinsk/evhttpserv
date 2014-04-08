@@ -4,6 +4,8 @@
 #include <netinet/in.h>
 #include <ev.h>
 
+#include <pthread.h>
+
 #if 0
 #include "xobstack.h"
 #include "hdrstore.h"
@@ -70,6 +72,11 @@ typedef int (*http_callback)(struct ev_loop *loop, struct ev_httpconn *w,
 struct ev_http;
 
 
+struct httpworker {
+  int fd;
+  pthread_t tid;
+};
+
 struct ev_http {
   ev_io io;
   ev_io ctrl;
@@ -91,14 +98,16 @@ struct ev_http {
   int obufsize;
   int ibufsize;
 
+  struct httpworker *workers;
+  size_t nworkers;
 };
 typedef struct ev_http ev_http;
 
-int ev_http_init(ev_http *http, http_callback cb, char *address,
-                 int port, int ctrlport);
+int ev_http_init(ev_http *http, size_t nworkers, http_callback cb, char *address,
+                 int port, int ctrl_port);
 void ev_http_start(struct ev_loop *loop, ev_http *http);
+void ev_http_break(struct ev_loop *loop, ev_http *http);
 void ev_http_stop(struct ev_loop *loop, ev_http *http);
-
 
 
 #endif /* EVHTTP_H__ */

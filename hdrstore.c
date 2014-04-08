@@ -86,8 +86,6 @@ hdrstore_init(struct hdrstore *store, struct xobs *pool)
 void
 hdrstore_free(struct hdrstore *store, int reset_only)
 {
-  struct header *hp, *tmp;
-
   HASH_CLEAR(hh, store->root);
 
   store->root = 0;

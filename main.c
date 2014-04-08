@@ -14,21 +14,23 @@ struct xobs pool;
 
 int req_callback(struct ev_loop *loop, struct ev_httpconn *w,
                  int eob, int revents);
-//static void sigint_cb(struct ev_loop *loop, ev_signal *w, int revents);
 
+static void sigint_cb(struct ev_loop *loop, ev_signal *w, int revents);
+
+ev_http http;
+ev_signal sigint_watcher;
 
 int
 main(int argc, char *argv[])
 {
   struct ev_loop *loop = EV_DEFAULT;
-  ev_http http;
 
   xerror_init(0, 0);
 
   xdebug(0, "sizeof ev_httpconn: %zd", sizeof(struct ev_httpconn));
 
-  if (argc != 2) {
-    fprintf(stderr, "usage: %s port\n", argv[0]);
+  if (argc != 3) {
+    fprintf(stderr, "usage: %s port nthread\n", argv[0]);
     return 1;
   }
 
@@ -44,13 +46,18 @@ main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
   }
 
-  ev_http_init(&http, req_callback, "0.0.0.0", atoi(argv[1]), 8888);
+  ev_http_init(&http, atoi(argv[2]), req_callback, "0.0.0.0", atoi(argv[1]), 8888);
+  ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
 
   ev_http_start(loop, &http);
+  ev_signal_start(loop, &sigint_watcher);
+  ev_unref(loop);
 
   ev_run(loop, 0);
 
   ev_http_stop(loop, &http);
+
+  xdebug(0, "evhttp terminated normally");
   return 0;
 }
 
@@ -67,7 +74,7 @@ req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
     w->rsp_code = 200;
     xdebug(0, "Request(%s, %s): %s", w->method_string, w->version, w->uri);
 
-#if 1
+#if 0
     {
       char *hdrs;
       hdrstore_fill(&w->req_hdrs, &pool, NULL, 0);
@@ -88,4 +95,13 @@ req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
   }
 
   return 0;
+}
+
+
+static void
+sigint_cb(struct ev_loop *loop, ev_signal *w, int revents)
+{
+  //ev_http_stop(loop, &http);
+  xdebug(0, "SIGINT received");
+  ev_http_break(loop, &http);
 }
