@@ -1,0 +1,12 @@
+# Files that GIT should ignore
+# See gitignore(5) for the format of this file
+
+*.gch
+*~
+*.o
+*.a
+*.so
+*.jar
+/unmaintained
+/evhttp
+/a.out

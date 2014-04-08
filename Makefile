@@ -8,7 +8,7 @@ CFLAGS=-Wall -g3
 #CFLAGS=-Wall -O2 -fomit-frame-pointer -DNDEBUG
 LIBS=-lev
 
-OBJS=evhttp.o xerror.o xobstack.o hdrstore.o buffer.o hexdump.o
+OBJS=evhttp.o evhttpconn.o xerror.o xobstack.o hdrstore.o buffer.o hexdump.o
 
 all: evhttp
 rebuild: clean all
