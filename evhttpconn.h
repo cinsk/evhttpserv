@@ -104,8 +104,7 @@ struct ev_httpconn {
 };
 typedef struct ev_httpconn ev_httpconn;
 
-int ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd,
-                     size_t inbufsize, size_t outbufsize);
+int ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd);
 void ev_httpconn_start(struct ev_loop *loop, ev_httpconn *hc);
 void ev_httpconn_stop(struct ev_loop *loop, ev_httpconn *hc);
 

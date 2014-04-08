@@ -129,7 +129,6 @@ ev_http_io_cb(struct ev_loop *loop, ev_io *w, int revents)
   socklen_t size = sizeof(cliaddr);
   ev_http *http = (ev_http *)(((char *)w) - offsetof(ev_http, io));
   ev_httpconn *hc;
-  int ibsz, obsz;
 
   fd = accept(w->fd, (struct sockaddr *)&cliaddr, &size);
   if (fd == -1) {
@@ -153,19 +152,20 @@ ev_http_io_cb(struct ev_loop *loop, ev_io *w, int revents)
   }
 #endif
 
+#if 0
   /* TODO: shouldn't rcvbuf_size be static variable? */
   get_buf_size(fd, &ibsz, &obsz);
   xdebug(0, "socket buffer size: recv(%d) send(%d)", ibsz, obsz);
+#endif
 
-
-  hc = malloc(sizeof(*hc) + ibsz);
+  hc = malloc(sizeof(*hc));
   if (!hc) {
     xerror(0, errno, "can't accept more connection");
     close(fd);
     return;
   }
 
-  ev_httpconn_init(hc, http, fd, ibsz, obsz);
+  ev_httpconn_init(hc, http, fd);
   ev_httpconn_start(loop, hc);
 }
 

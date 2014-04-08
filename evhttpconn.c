@@ -119,8 +119,7 @@ get_te(ev_httpconn *hc, int index)
 
 
 int
-ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd,
-                  size_t inbufsize, size_t outbufsize)
+ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd)
 {
   ev_io_init(&hc->io, ev_httpconn_read_cb, fd, EV_READ);
 
