@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <string.h>
+#include <limits.h>
 
 #include <errno.h>
 
@@ -32,24 +33,42 @@
 #endif
 
 static void ev_http_io_cb(struct ev_loop *loop, ev_io *w, int revents);
+static void ev_http_ctrl_cb(struct ev_loop *loop, ev_io *w, int revents);
+static void ev_http_idle_cb(struct ev_loop *loop, ev_idle *w, int revents);
 
 static void get_buf_size(int fd, int *rdbuf_size, int *wrbuf_size);
-static int tcp_listen(const char *address, int port, int flags);
-static int tcp6_listen(const char *address, int port, int flags);
-static int tcp4_listen(const char *address, int port, int flags);
+static int tcp_open(const char *address, int port, int type, int flags);
+static int tcp4_open(const char *address, int port, int type, int flags);
+static int tcp6_open(const char *address, int port, int type, int flags);
 
 
 int
-ev_http_init(ev_http *http, http_callback cb, char *address, int port)
+ev_http_init(ev_http *http, http_callback cb, char *address,
+             int port, int ctrl_port)
 {
-  int fd;
+  int fd, cfd;
+
+  http->quit = 0;
+  http->nclients = 0;
+  http->cb = cb;
 
   strncpy(http->address, address, INET_ADDRSTRLEN - 1);
   http->address[INET_ADDRSTRLEN - 1] = '\0';
   http->port = port;
-  http->cb = cb;
+  http->ctrlport = ctrl_port;
 
-  fd = tcp_listen(address, port, O_NONBLOCK);
+  fd = tcp_open(address, port, SOCK_STREAM, O_NONBLOCK);
+  if (fd == -1) {
+    xdebug(errno, "tcp_open(%s, %d, STREAM, NONBLOCK) failed", address, port);
+    return 0;
+  }
+
+  if (listen(fd, 5) != 0) {
+    xerror(0, errno, "listen() failed");
+    close(fd);
+    return 0;
+  }
+
   {
     /* TODO: is FD non-blocking?? */
     int sflag;
@@ -59,22 +78,33 @@ ev_http_init(ev_http *http, http_callback cb, char *address, int port)
     xdebug(0, "fd(%d) is %sBLOCKING", fd, (sflag & O_NONBLOCK) ? "NON-" : "");
   }
 
-  if (fd == -1) {
-    xdebug(errno, "tcp_listen(%s, %d) failed", address, port);
-    return -1;
+  cfd = tcp_open("127.0.0.1", ctrl_port, SOCK_DGRAM, O_NONBLOCK);
+  if (cfd == -1) {
+    xdebug(errno, "can't open control port %d", ctrl_port);
   }
 
   get_buf_size(fd, &http->ibufsize, &http->obufsize);
 
   ev_io_init(&http->io, ev_http_io_cb, fd, EV_READ);
-  return 0;
+
+  if (cfd == -1)
+    http->ctrlport = -1;
+  if (http->ctrlport != -1)
+    ev_io_init(&http->ctrl, ev_http_ctrl_cb, cfd, EV_READ);
+
+  ev_idle_init(&http->idle, ev_http_idle_cb);
+
+  return 1;
 }
 
 
 void
 ev_http_start(struct ev_loop *loop, ev_http *http)
 {
+  if (http->ctrlport != -1)
+    ev_io_start(loop, &http->ctrl);
   ev_io_start(loop, &http->io);
+  ev_idle_start(loop, &http->idle);
 }
 
 
@@ -82,6 +112,20 @@ void
 ev_http_stop(struct ev_loop *loop, ev_http *http)
 {
   /* TODO */
+
+  if (!http->quit) {
+    ev_io_stop(loop, &http->io);
+    if (close(http->io.fd) == -1)
+      xdebug(errno, "close(httpfd) failed");
+  }
+
+  if (http->ctrlport != -1) {
+    ev_io_stop(loop, &http->ctrl);
+    if (close(http->ctrl.fd) == -1)
+      xerror(0, errno, "close(ctrlfd) failed");
+  }
+
+  ev_idle_stop(loop, &http->idle);
 }
 
 
@@ -120,6 +164,71 @@ get_buf_size(int fd, int *rdbuf_size, int *wrbuf_size)
   }
 }
 
+
+static void
+ev_http_idle_cb(struct ev_loop *loop, ev_idle *w, int revents)
+{
+  ev_http *http = (ev_http *)(((char *)w) - offsetof(ev_http, idle));
+
+  if (http->quit && http->nclients == 0)
+    ev_break(loop, EVBREAK_ALL);
+}
+
+
+static void
+ev_http_ctrl_cb(struct ev_loop *loop, ev_io *w, int revents)
+{
+  ev_http *http = (ev_http *)(((char *)w) - offsetof(ev_http, ctrl));
+  int readch;
+  struct sockaddr_storage addr;
+  socklen_t addrlen = sizeof(addr);
+
+  char ibuf[LINE_MAX];
+  char obuf[LINE_MAX];
+  size_t olen;
+  ssize_t sent;
+
+  readch = recvfrom(w->fd, ibuf, sizeof(ibuf) - 1,
+                    MSG_DONTWAIT, (struct sockaddr *)&addr, &addrlen);
+
+  if (readch == -1) {
+    if (errno == EINTR || errno == EAGAIN)
+      return;
+    xerror(0, errno, "recvfrom(2) failed on control fd (errno=%d)", errno);
+    /* TODO: What now? */
+  }
+  else if (readch == 0) {
+    xdebug(errno, "WARNING!: control fd is closed? (errno=%d)", errno);
+    /* TODO: reopen */
+    return;
+  }
+  ibuf[LINE_MAX - 1] = '\0';
+
+  switch (ibuf[0]) {
+  case 'n':
+    sprintf(obuf, "OK %zd\n", http->nclients);
+    break;
+  case 'q':
+    xerror(0, 0, "QUIT request received");
+    ev_io_stop(loop, &http->io);
+    if (close(http->io.fd) == -1)
+      xdebug(errno, "close(httpfd) failed");
+    http->quit = 1;
+
+    strcpy(obuf, "OK\n");
+    break;
+  default:
+    strcpy(obuf, "ERR\n");
+    break;
+  }
+  olen = strlen(obuf);
+  sent = sendto(w->fd, obuf, olen, MSG_DONTWAIT,
+                (struct sockaddr *)&addr, addrlen);
+  if (sent < 0)
+    xdebug(errno, "sendto(2) failed");
+  else
+    xdebug(0, "sendto(fd, buffer, len:%zd) == %zd", olen, sent);
+}
 
 static void
 ev_http_io_cb(struct ev_loop *loop, ev_io *w, int revents)
@@ -171,7 +280,7 @@ ev_http_io_cb(struct ev_loop *loop, ev_io *w, int revents)
 
 
 static int
-tcp6_listen(const char *address, int port, int flags)
+tcp6_open(const char *address, int port, int type, int flags)
 {
   struct sockaddr_in6 addr6;
   static struct in6_addr any6 = IN6ADDR_ANY_INIT;
@@ -179,7 +288,7 @@ tcp6_listen(const char *address, int port, int flags)
   int sopt;
   int saved_errno;
 
-  fd = socket(PF_INET6, SOCK_STREAM, 0);
+  fd = socket(PF_INET6, type, 0);
 
   if (fd < 0)
     return -1;
@@ -206,14 +315,52 @@ tcp6_listen(const char *address, int port, int flags)
     return -1;
   }
 
-  if (flags)
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | flags);
+  if (flags) {
+    if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | flags) == -1)
+      xerror(0, errno, "fcntl() failed");
+  }
 
-  if (listen(fd, 5) != 0) {
+  return fd;
+}
+
+
+static int
+tcp4_open(const char *address, int port, int type, int flags)
+{
+  struct sockaddr_in addr;
+
+  int fd;
+  int sopt;
+  int saved_errno;
+
+  fd = socket(PF_INET, type, 0);
+  if (fd < 0)
+    return -1;
+  sopt = 1;
+  if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &sopt, sizeof(sopt)) != 0)
+    xerror(0, errno, "setsockopt(SO_REUSEADDR) failed");
+
+  if (address == 0)
+    addr.sin_addr.s_addr = INADDR_ANY;
+  else if (inet_pton(AF_INET, address, &addr.sin_addr) != 1) {
     saved_errno = errno;
     close(fd);
     errno = saved_errno;
     return -1;
+  }
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(port);
+
+  if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+    saved_errno = errno;
+    close(fd);
+    errno = saved_errno;
+    return -1;
+  }
+
+  if (flags) {
+    if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | flags) == -1)
+      xerror(0, errno, "fcntl() failed");
   }
 
   return fd;
@@ -268,11 +415,11 @@ tcp4_listen(const char *address, int port, int flags)
 
 
 int
-tcp_listen(const char *address, int port, int flags)
+tcp_open(const char *address, int port, int type, int flags)
 {
   if (strchr(address, ':')) {
-    return tcp6_listen(address, port, flags);
+    return tcp6_open(address, port, type, flags);
   }
   else
-    return tcp4_listen(address, port, flags);
+    return tcp4_open(address, port, type, flags);
 }

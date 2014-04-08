@@ -86,6 +86,10 @@ hdrstore_init(struct hdrstore *store, struct xobs *pool)
 void
 hdrstore_free(struct hdrstore *store, int reset_only)
 {
+  struct header *hp, *tmp;
+
+  HASH_CLEAR(hh, store->root);
+
   store->root = 0;
   store->nheaders = 0;
 
@@ -161,6 +165,7 @@ hdrstore_dump(struct hdrstore *store, FILE *fp)
   char *p;
   int count;
 
+  xobs_init(&pool);
   count = hdrstore_fill(store, &pool, "HTTP/fake", 200);
   p = xobs_finish(&pool);
   fprintf(fp, "%s", p);
@@ -237,7 +242,7 @@ Content-Type: text/html\r\n\r\nBODY";
   //hdrstore_set(&hstore, "Transfer-Encoding", "chunked");
 
   hdrstore_dump(&hstore, stderr);
-  hdrstore_free(&hstore, 0);
+  hdrstore_free(&hstore, 1);
   xobs_free(&pool, NULL);
 
   fprintf(stderr, "--\n");

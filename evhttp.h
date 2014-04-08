@@ -72,17 +72,30 @@ struct ev_http;
 
 struct ev_http {
   ev_io io;
+  ev_io ctrl;
+  ev_idle idle;
+
+  int quit;                     /* When 'QUIT' control request
+                                 * received, QUIT will be nonzero, and
+                                 * IO will be stoped, and its fd will
+                                 * be closed.  In other words, IO is
+                                 * in invalid state when QUIT is
+                                 * nonzero. */
+  size_t nclients;
+  http_callback cb;
+
   char address[INET_ADDRSTRLEN];
   int port;
+  int ctrlport;
 
   int obufsize;
   int ibufsize;
 
-  http_callback cb;
 };
 typedef struct ev_http ev_http;
 
-int ev_http_init(ev_http *http, http_callback cb, char *address, int port);
+int ev_http_init(ev_http *http, http_callback cb, char *address,
+                 int port, int ctrlport);
 void ev_http_start(struct ev_loop *loop, ev_http *http);
 void ev_http_stop(struct ev_loop *loop, ev_http *http);
 

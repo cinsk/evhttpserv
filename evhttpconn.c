@@ -123,8 +123,8 @@ ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd)
 {
   ev_io_init(&hc->io, ev_httpconn_read_cb, fd, EV_READ);
 
-  hc->r_timeout = 10;
-  hc->w_timeout = 10;
+  hc->r_timeout = 60;
+  hc->w_timeout = 60;
 
   ev_timer_init(&hc->timer, ev_httpconn_timer_cb,
                 hc->r_timeout, hc->r_timeout);
@@ -169,6 +169,8 @@ ev_httpconn_start(struct ev_loop *loop, ev_httpconn *hc)
   hc->state = HC_RECV_REQ;
   ev_io_start(loop, &hc->io);
   ev_timer_start(loop, &hc->timer);
+
+  hc->http->nclients++;
 }
 
 void
@@ -180,6 +182,9 @@ ev_httpconn_stop(struct ev_loop *loop, ev_httpconn *hc)
 
   if (close(hc->io.fd) == -1)
     xdebug(errno, "close(%d) failed", hc->io.fd);
+
+  hdrstore_free(&hc->rsp_hdrs, 1);
+  hdrstore_free(&hc->req_hdrs, 1);
 
   /* TODO: release everything */
   xobs_free(&hc->hdr_pool, 0);
@@ -193,6 +198,8 @@ ev_httpconn_stop(struct ev_loop *loop, ev_httpconn *hc)
   /* TODO: do I call some callback from user-side? */
 
   free(hc);
+
+  hc->http->nclients--;
 }
 
 
