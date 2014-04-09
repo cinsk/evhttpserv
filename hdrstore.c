@@ -75,7 +75,6 @@ hdrstore_init(struct hdrstore *store, struct xobs *pool)
 {
   store->pool = pool;
 
-  fprintf(stderr, "objectsize: %d\n", xobs_object_size(store->pool));
   assert(xobs_object_size(store->pool) == 0);
 
   store->root = 0;

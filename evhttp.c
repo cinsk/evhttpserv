@@ -70,6 +70,8 @@ worker_stop(struct ev_loop *loop, struct wwatcher *ww, int now)
 
   if (now)
     ev_break(loop, EVBREAK_ALL);
+  else
+    ev_idle_start(loop, &ww->idle);
 }
 
 static void *
@@ -87,11 +89,12 @@ worker_proc(void *arg)
   ev_idle_init(&ww->idle, ev_worker_idle_cb);
 
   ev_io_start(loop, &ww->io);
-  ev_idle_start(loop, &ww->idle);
+  // ev_idle_start(loop, &ww->idle);
 
   ev_run(loop, 0);
 
   ev_io_stop(loop, &ww->io);
+
   close(ww->io.fd);
 
   free(ww);
@@ -205,8 +208,10 @@ ev_worker_idle_cb(struct ev_loop *loop, ev_idle *w, int revents)
 
   __sync_synchronize();
 
-  if (ww->quit && ww->nclients == 0)
+  if (ww->quit && ww->nclients == 0) {
+    ev_idle_stop(loop, &ww->idle);
     ev_break(loop, EVBREAK_ALL);
+  }
 }
 
 
@@ -316,7 +321,7 @@ ev_http_start(struct ev_loop *loop, ev_http *http)
     if (http->ctrlport != -1)
       ev_io_start(loop, &http->ctrl);
     ev_io_start(loop, &http->io);
-    ev_idle_start(loop, &http->idle);
+    //ev_idle_start(loop, &http->idle);
   }
   else {
     for (i = 0; i < http->nworkers; i++) {
@@ -373,10 +378,7 @@ ev_http_stop(struct ev_loop *loop, ev_http *http)
       xerror(0, errno, "close(ctrlfd) failed");
   }
 
-  if (http->nworkers == 0) {
-    ev_idle_stop(loop, &http->idle);
-  }
-  else {
+  if (http->nworkers != 0) {
     /* TODO: implement */
 
     for (i = 0; i < http->nworkers; i++) {
@@ -434,8 +436,10 @@ ev_http_idle_cb(struct ev_loop *loop, ev_idle *w, int revents)
 {
   ev_http *http = (ev_http *)(((char *)w) - offsetof(ev_http, idle));
 
-  if (http->quit && http->nclients == 0)
+  if (http->quit && http->nclients == 0) {
+    ev_idle_stop(loop, w);
     ev_break(loop, EVBREAK_ALL);
+  }
 }
 
 
@@ -449,6 +453,9 @@ ev_http_break(struct ev_loop *loop, ev_http *http)
   ev_io_stop(loop, &http->io);
 
   http->quit = 1;
+
+  if (http->nworkers == 0)
+    ev_idle_start(loop, &http->idle);
 
   for (i = 0; i < http->nworkers; i++) {
     if (close(http->workers[i].fd) == -1)
@@ -493,6 +500,7 @@ ev_http_ctrl_cb(struct ev_loop *loop, ev_io *w, int revents)
     sprintf(obuf, "OK %zd\n", http->nclients);
     break;
   case 'q':
+    /* TODO: use ev_http_break() */
     xerror(0, 0, "QUIT request received");
     if (close(http->io.fd) == -1)
       xdebug(errno, "close(httpfd) failed");
@@ -620,6 +628,12 @@ tcp4_open(const char *address, int port, int type, int flags)
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &sopt, sizeof(sopt)) != 0)
     xerror(0, errno, "setsockopt(SO_REUSEADDR) failed");
 
+#ifdef SO_REUSEPORT
+  sopt = 1;
+  if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &sopt, sizeof(sopt)) != 0)
+    xerror(0, errno, "setsockopt(SO_REUSEPORT) failed");
+#endif
+
   if (address == 0)
     addr.sin_addr.s_addr = INADDR_ANY;
   else if (inet_pton(AF_INET, address, &addr.sin_addr) != 1) {
@@ -662,6 +676,12 @@ tcp4_listen(const char *address, int port, int flags)
   sopt = 1;
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &sopt, sizeof(sopt)) != 0)
     xerror(0, errno, "setsockopt(SO_REUSEADDR) failed");
+
+#ifdef SO_REUSEPORT
+  sopt = 1;
+  if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &sopt, sizeof(sopt)) != 0)
+    xerror(0, errno, "setsockopt(SO_REUSEPORT) failed");
+#endif
 
   if (address == 0)
     addr.sin_addr.s_addr = INADDR_ANY;

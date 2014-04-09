@@ -4,9 +4,9 @@ KCDB_LIBS:=`kcutilmgr conf -l`
 #CFLAGS=-Wall -g3 $(KCDB_CFLAGS)
 #LIBS=-lsqlite3 -lev $(KCDB_LIBS)
 
-CFLAGS=-Wall -g3 -pg -D_PTHREAD
+CFLAGS=-Wall -g3
 #CFLAGS=-Wall -O2 -fomit-frame-pointer -DNDEBUG
-LIBS=-lev -lpthread
+LIBS=-lev -ltcmalloc -lpthread
 
 OBJS=evhttp.o evhttpconn.o xerror.o xobstack.o hdrstore.o buffer.o hexdump.o
 

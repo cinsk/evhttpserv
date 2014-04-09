@@ -241,6 +241,7 @@ ev_httpconn_toggle_readwrite(struct ev_loop *loop, ev_httpconn *hc)
 {
   ev_io_stop(loop, &hc->io);
 
+  xdebug(0, "toggle_readwrite: %d", hc->state);
   if (hc->io.cb == ev_httpconn_read_cb) {
     if (hc->state == HC_SEND_RSP) {
       // Transition from HC_RECV_RSP|HC_RECV_BODY.
@@ -545,8 +546,12 @@ load_req_line_headers(ev_httpconn *hc, char *req)
     const char *val;
 
     val = hdrstore_get(&hc->req_hdrs, "Connection");
-    if (val && strcmp(val, "close") == 0)
+    if (val) {
+      if (strcmp(val, "close") == 0)
         hc->rsp_disconnect = 1;
+      else
+        hc->rsp_disconnect = 0;
+    }
     else if (strcmp(hc->version, "HTTP/1.0") == 0)
         hc->rsp_disconnect = 1;
   }
@@ -604,10 +609,12 @@ ev_httpconn_read_cb(struct ev_loop *loop, ev_io *w, int revents)
   if (hc->state == HC_RECV_REQ) {
     readch = buffer_fill_fd(&hc->ibuf, w->fd, hc->http->ibufsize, &eof);
     if (readch == -1) {
-      xdebug(errno, "read failed (errno=%d)", errno);
+      if (buffer_size(&hc->ibuf, 0) > 0 || errno != ECONNRESET)
+        xdebug(errno, "read failed (errno=%d)", errno);
       ev_httpconn_stop(loop, hc);
       return;
     }
+#if 0
     else if (eof) {
 #ifndef NDEBUG
       if (buffer_size(&hc->ibuf, NULL) > 0)
@@ -616,10 +623,19 @@ ev_httpconn_read_cb(struct ev_loop *loop, ev_io *w, int revents)
       ev_httpconn_stop(loop, hc);
       return;
     }
+#endif
 
     /* TODO: implement 5th arg of buffer_find()? */
-    if (!buffer_find(&hc->ibuf, CRLF2, CRLF2LEN, &found, NULL))
+    if (!buffer_find(&hc->ibuf, CRLF2, CRLF2LEN, &found, NULL)) {
+      if (eof) {
+#ifndef NDEBUG
+        if (buffer_size(&hc->ibuf, NULL) > 0)
+          xdebug(0, "premature EOF");
+#endif
+        ev_httpconn_stop(loop, hc);
+      }
       return;
+    }
 
     buffer_copy(&hc->hdr_pool, &hc->ibuf, &found);
 
