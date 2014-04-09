@@ -11,6 +11,7 @@
 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 
 #include "evhttp.h"
@@ -118,38 +119,39 @@ ev_http_producer_cb(struct ev_loop *loop, ev_io *w, int revents)
     return;
   }
 
-  fd = accept(w->fd, (struct sockaddr *)&cliaddr, &size);
-  if (fd == -1) {
-    int e = errno;
-    if (errno == EWOULDBLOCK || errno == EINTR)
+  while (1) {
+    fd = accept(w->fd, (struct sockaddr *)&cliaddr, &size);
+    if (fd == -1) {
+      int e = errno;
+      if (errno == EWOULDBLOCK || errno == EINTR)
+        return;
+      xerror(0, errno, "can't accept more connection");
+      /* TODO: now what? */
+      ev_http_stop(loop, http);   /* TODO: follow ev_http_stop() and see if it is right. */
       return;
-    xerror(0, errno, "can't accept more connection");
-    /* TODO: now what? */
-    ev_http_stop(loop, http);   /* TODO: follow ev_http_stop() and see if it is right. */
-    return;
-  }
-
-  // set_nonblock(fd);
-
-  for (i = 0; i < http->nworkers; i++) {
-    next = (next + 1) % http->nworkers;
-    written = write(http->workers[next].fd, &fd, sizeof(fd));
-
-    if (written == sizeof(fd)) {
-      xdebug(0, "push fd(%d) to thread#%zd", fd, next);
-      break;
     }
-    if (errno != EINTR && errno != EAGAIN) {
-      xdebug(errno, "can't produce the job to thread#%zd", next);
-      abort();                  /* TODO: implement the error handling */
-    }
-  }
 
-  if (written == -1) {
-    /* no thread can accept FD. */
-    xdebug(errno, "possible overload. ignoring the connection");
-    close(fd);
-    return;
+    // set_nonblock(fd);
+
+    for (i = 0; i < http->nworkers; i++) {
+      next = (next + 1) % http->nworkers;
+      written = write(http->workers[next].fd, &fd, sizeof(fd));
+
+      if (written == sizeof(fd)) {
+        xdebug(0, "push fd(%d) to thread#%zd", fd, next);
+        break;
+      }
+      if (errno != EINTR && errno != EAGAIN) {
+        xdebug(errno, "can't produce the job to thread#%zd", next);
+        abort();                  /* TODO: implement the error handling */
+      }
+    }
+
+    if (written == -1) {
+      /* no thread can accept FD. */
+      xdebug(errno, "possible overload. ignoring the connection");
+      close(fd);
+    }
   }
 }
 
@@ -320,6 +322,8 @@ ev_http_start(struct ev_loop *loop, ev_http *http)
   if (http->nworkers == 0) {
     if (http->ctrlport != -1)
       ev_io_start(loop, &http->ctrl);
+
+    ev_set_priority(&http->io, EV_MAXPRI);
     ev_io_start(loop, &http->io);
     //ev_idle_start(loop, &http->idle);
   }
@@ -546,6 +550,7 @@ ev_http_io_cb(struct ev_loop *loop, ev_io *w, int revents)
     ev_http_stop(loop, http);
   }
 
+  xdebug(0, "accept() => %d", fd);
   /* TODO: is FD non-blocking?? */
   set_nonblock(fd);
 
@@ -628,7 +633,19 @@ tcp4_open(const char *address, int port, int type, int flags)
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &sopt, sizeof(sopt)) != 0)
     xerror(0, errno, "setsockopt(SO_REUSEADDR) failed");
 
-#ifdef SO_REUSEPORT
+  sopt = 1;
+  if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &sopt, sizeof(sopt)) != 0)
+    xerror(0, errno, "setsockopt(TCP_NODELAY) failed");
+
+  {
+    struct linger l;
+    l.l_onoff = 1;
+    l.l_linger = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l)) != 0)
+      xerror(0, errno, "setsockopt(SO_LINGER) failed");
+  }
+
+#if defined(REUSEPORT) && defined(SO_REUSEPORT)
   sopt = 1;
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &sopt, sizeof(sopt)) != 0)
     xerror(0, errno, "setsockopt(SO_REUSEPORT) failed");
@@ -677,7 +694,7 @@ tcp4_listen(const char *address, int port, int flags)
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &sopt, sizeof(sopt)) != 0)
     xerror(0, errno, "setsockopt(SO_REUSEADDR) failed");
 
-#ifdef SO_REUSEPORT
+#if defined(REUSEPORT) && defined(SO_REUSEPORT)
   sopt = 1;
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &sopt, sizeof(sopt)) != 0)
     xerror(0, errno, "setsockopt(SO_REUSEPORT) failed");
@@ -704,7 +721,7 @@ tcp4_listen(const char *address, int port, int flags)
   if (flags)
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | flags);
 
-  if (listen(fd, 5) != 0) {
+  if (listen(fd, 131072) != 0) {
     saved_errno = errno;
     close(fd);
     errno = saved_errno;

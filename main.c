@@ -46,7 +46,9 @@ main(int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
   }
 
-  ev_http_init(&http, atoi(argv[2]), req_callback, "0.0.0.0", atoi(argv[1]), 8888);
+  // ev_set_io_collect_interval(loop, 0.000001);
+
+  ev_http_init(&http, atoi(argv[2]), req_callback, "0.0.0.0", atoi(argv[1]), -1);
   ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
 
   ev_http_start(loop, &http);

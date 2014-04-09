@@ -123,8 +123,8 @@ ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd, size_t *refcount
 {
   ev_io_init(&hc->io, ev_httpconn_read_cb, fd, EV_READ);
 
-  hc->r_timeout = 60;
-  hc->w_timeout = 60;
+  hc->r_timeout = 5;
+  hc->w_timeout = 5;
 
   ev_timer_init(&hc->timer, ev_httpconn_timer_cb,
                 hc->r_timeout, hc->r_timeout);
@@ -178,7 +178,8 @@ ev_httpconn_start(struct ev_loop *loop, ev_httpconn *hc)
 void
 ev_httpconn_stop(struct ev_loop *loop, ev_httpconn *hc)
 {
-  xdebug(0, "ev_httpconn_stop for fd(%d)", hc->io.fd);
+  xdebug(0, "ev_httpconn_stop for fd(%d), pending watchers(%d)", hc->io.fd,
+         ev_pending_count(loop));
   if (close(hc->io.fd) == -1)
     xdebug(errno, "close(2) failed on httpconn(%d)", hc->io.fd);
   ev_io_stop(loop, &hc->io);
