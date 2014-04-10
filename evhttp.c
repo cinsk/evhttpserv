@@ -249,7 +249,7 @@ ev_http_init(ev_http *http, size_t nworkers, http_callback cb, char *address,
     http->nworkers = 0;
   }
   else {
-    http->workers = malloc(sizeof(*http->workers) * nworkers);
+    http->workers = malloc(sizeof(http->workers[0]) * nworkers);
     if (!http->workers)
       return 0;
     http->nworkers = nworkers;
@@ -269,7 +269,7 @@ ev_http_init(ev_http *http, size_t nworkers, http_callback cb, char *address,
     return 0;
   }
 
-  if (listen(fd, 5) != 0) {
+  if (listen(fd, 131072) != 0) {
     xerror(0, errno, "listen() failed");
     close(fd);
     return 0;
@@ -396,6 +396,7 @@ ev_http_stop(struct ev_loop *loop, ev_http *http)
       pthread_join(http->workers[i].tid, &retval);
     }
   }
+
 }
 
 
@@ -645,7 +646,7 @@ tcp4_open(const char *address, int port, int type, int flags)
       xerror(0, errno, "setsockopt(SO_LINGER) failed");
   }
 
-#if defined(REUSEPORT) && defined(SO_REUSEPORT)
+#ifdef SO_REUSEPORT
   sopt = 1;
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &sopt, sizeof(sopt)) != 0)
     xerror(0, errno, "setsockopt(SO_REUSEPORT) failed");
@@ -694,7 +695,7 @@ tcp4_listen(const char *address, int port, int flags)
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &sopt, sizeof(sopt)) != 0)
     xerror(0, errno, "setsockopt(SO_REUSEADDR) failed");
 
-#if defined(REUSEPORT) && defined(SO_REUSEPORT)
+#ifdef SO_REUSEPORT
   sopt = 1;
   if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &sopt, sizeof(sopt)) != 0)
     xerror(0, errno, "setsockopt(SO_REUSEPORT) failed");
