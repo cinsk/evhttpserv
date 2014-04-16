@@ -1,0 +1,22 @@
+digraph {
+	graph [ranksep=0.25, fontname=Arial, nodesep=0.125];
+	node [fontname=Arial, style=filled, height=0, width=0,
+              shape=box, fontcolor=black, fontsize=12];
+	edge [fontname=Arial, fontsize=8];
+        conn [shape=diamond, label="\"Connection\"?"];
+
+        conn -> protocol [label=" not found"];
+
+        conn -> alive [label="\"Keep-Alive\""];
+        conn -> close [label=" \"close\""];
+        
+        protocol [shape=diamond, label="HTTP/1.1?"];
+        protocol -> alive [label="yes"];
+        protocol -> close [label="no"];
+
+        alive [shape=egg];
+        close [shape=egg];
+
+        alive -> nextreq;
+        nextreq [label="Continue\nto parse\nnext request"];
+}

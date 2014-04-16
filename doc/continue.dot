@@ -1,0 +1,57 @@
+digraph {
+	graph [ranksep=0.25, fontname=Arial, nodesep=0.125];
+	node [fontname=Arial, style=filled, height=0, width=0, shape=box, fontcolor=black, fontsize=12];
+	edge [fontname=Arial, fontsize=8];
+
+        expect [shape=diamond, label="Expect:\n100-continue?"];
+
+        E417 [shape=egg, label="417\nexpectation\nfailed"];
+        E4XX [shape=egg, label="4XX error"];
+
+        allowedp [shape=diamond, label="Allowed?"];
+        expect -> allowedp [label="yes"];
+        allowedp -> E4XX [label="no"];
+
+        protocol -> read_body [label="no\n(optional)\nbody detected",
+                               fontcolor="#696969", color="#696969"];
+        allowedp -> clenp [label="yes"];
+
+        protocol [shape=diamond, label="HTTP/1.0?"];
+
+        protocol -> send_100 [label="no"];
+        protocol -> read_body [label="yes"];
+
+        send_100 [label="HTTP/1.1\n100 Continue"];
+        read_body [label="Read Body"];
+
+        send_100 -> read_body [label="no wait,\njust read"];
+        
+        expect -> E417 [label="other than\n100-continue"];
+
+        clenp [shape=diamond, label="Content-Length?"];
+        clenp -> tep [label="not found"];
+        clenp -> protocol [label="found"];
+        
+        tep [shape=diamond, label="Transfer-Encoding:\nchunked?"];
+
+        tep -> E411 [label="no"];
+        tep -> protocol [label="yes"];
+        
+        E411 [shape=egg, label="411\nLength\nRequired"];
+
+        read_body -> process;
+
+        process [shape=diamond, label="Handle\nRequest"];
+
+        process -> success [label="succeeded"];
+        
+        success [shape=diamond, label="resource\ncreated?"];
+        success -> E200_201 [label="no"];
+        E200_201 [shape=egg, label="200 OK\n204 NO CONTENT"];
+
+        success -> E201 [label="yes"];
+        E201 [shape=egg, label="201 CREATED"];
+        
+        process -> E4XX_5XX [label="failed"];
+        E4XX_5XX [shape=egg, label="4XX or 5XX"];
+}

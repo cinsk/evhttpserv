@@ -1,0 +1,556 @@
+# -*-org-*-
+#+OPTIONS: toc:4
+#+OPTIONS: html-style:nil
+#+OPTIONS: d:(not "LOGBOOK" "COMMENT")
+#+HTML_HEAD: <link href="http://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" rel="stylesheet" type="text/css">
+#+HTML_HEAD: <link href="http://www.cinsk.org/css/org-standalone.css" rel="stylesheet" type="text/css">
+#+LINK: google http://www.google.com/search?q=%s
+#+LINK: rfc http://www.rfc-editor.org/rfc/rfc%s.txt
+#+TODO: TODO(t) | DONE(d) CANCELED(c) POSTPONED
+#+DRAWERS: PROPERTIES CLOCK LOGBOOK COMMENT
+#+TITLE: evhttp - HTTP server backend for libev
+#+AUTHOR: Seong-Kook Shin
+#+EMAIL: cinsky@gmail.com
+
+:COMMENT:
+Markup hints:
+  - *bold*, /italic/, _underlined_, =code=, ~verbatim~
+  - Use '\\' at the end of a line to force a line break.
+#+BEGIN_EXAMPLE
+  ,#+NAME: my target        # to create internal TARGET.
+  - <<target>>another item, we refer to item [[target]]
+  [[URL or TARGET][NAME]]   # to create a hyperlink.
+  [[google:KEYWORD][DESC]]  # to link to Google with KEYWORD.
+  [[rfc:NUMBER][DESC]]      # to link to RFC-NUMBER.txt.
+#+END_EXAMPLE
+  - `C-c C-o' to follow a link target.
+  - Use "#+BEGIN_VERSE ... #+END_VERBSE" to format poetry
+  - Use "#+BEGIN_QUOTE ... #+END_QUOTE" to format a quotation.
+  - Use "#+BEGIN_CENTER ... #+END_CENTER" to center some text.
+  - `C-c C-x f' for footnote action(jump or insert).
+  - Unordered list items start with `-', `+', or `*' as bulllets.
+  - Ordered list items start with  `1.' or `1)'.
+
+  For math equation, use $...$ in a paragraph, or \[...\].
+  Use \begin{eqnarray}...\end{eqnarray} for multi-line equation.
+  For example:
+#+BEGIN_SRC org
+  \begin{eqnarray}
+    x &=& r \cos \theta \\
+    y &=& r \sin \theta \\
+  \end{eqnarray}
+#+END_SRC
+  - See [[http://en.wikibooks.org/wiki/LaTeX/Mathematics][Math]] for math equations.
+
+Table hints:
+  - `C-c C-c' to re-align the table
+  - Use "<N>" in the field to specify the width of the column.
+  - Use `C-c `' to edit such a field.
+  - See also [[info:org#Column groups][info:Column groups]]
+  - See also [[info:org#The spreadsheet][info:Spreadsheet]]
+:END:
+
+
+* Overview
+
+*** Asynchronous Server
+    file:evhttp.png
+
+*** libev callback
+    file:evhttp-evcb.png
+
+* Persistent Connection
+
+  [[file:keepalive.png]]
+
+  - HTTP/1.0 sever는 기본적으로 request 처리 후, 연결을 끊는다.
+  - 만약 client가 "Connection: Keep-Alive"를 보내면, persistent connection을 사용.
+  - HTTP/1.1 server는 기본적으로 persistent connection을 사용.
+  - 1.0, 1.1 모두, "Connection: close"를 받으면 연결을 끊는다.
+
+* High Throughput or Responsiveness
+
+  현재 connection에서 N개의 request가 있을 경우, N개를 모두
+  serving하고, 다음 connection을 처리할 것인지?  아니면 1개만 처리하고
+  다음 connection을 처리할 것인지?
+
+  - 현재 connection에서 N개를 다 처리할 경우, benchmark performance는
+    향상됨.
+  - 그러나, 현재 connection에서 처리가 늦어질 경우, 이후 다른
+    connection에서는 delay가 발생되어 fair하지 않음.
+
+* virtual host, static entity, dynamic contents
+
+  1. request가 들어오면, 일단 virtual host를 판단해야 함 (for docroot).
+
+     HTTP/1.0 -> Use default docroot
+     HTTP/1.1 -> Use HC->HTTP->DOCROOT to determine the docroot.
+                 If it cannot determine, response with 400 bad request.
+
+  2. 그 다음, dynamic request인지 판단해야 함. how? regular expression?
+     (TODO: regular expression map??)
+
+  3. dynamic request인 경우, 적절한 callback 호출, responde.
+     (TODO: timeout handling??)
+
+  4. static request인 경우, (async http server이므로 CGI 지원 안함)
+     해당 resource가 있는지 판단하고, 없으면 404 not found, 있으면
+     serving함.
+
+*** Regular expression
+
+    [[http://lh3lh3.users.sourceforge.net/reb.shtml][Benchmark of Regex Libraries]]
+
+    If we don't need grouping, egrep is the best choice.
+    Next, re2.
+
+    | Library | Regexp pattern          | maches / sec |
+    |---------+-------------------------+--------------|
+    | POSIX   | ~/db/([^/]+)/([^/]+)/⁠?~ |       403225 |
+    | PCRE    | ~/db/([^/]+)/([^/]+)/⁠?~ |      9090909 |
+
+* TODO POST
+
+  - Content-Length가 있는지 판단.
+  - Transfer-Encoding이 identity인지 판단.
+
+#+BEGIN_SRC c
+  size_t size_guard;              /* max allowed POST body size */
+  
+  if (TE == identity) {
+    if (Content-Length) {
+      if (Expect == 100_continue) {
+        if (Content-Length > size_guard) {
+          rsp_code = 417_Expentation_failed;
+          ev_httpconn_stop();
+          return;
+        }
+        
+      }
+    }
+  
+#+END_SRC
+
+*** 100-Continue
+
+    file:continue.png
+
+    client sent
+
+    Expect: 100-continue
+
+    client가 "Expect: ..."를 보낸 후, 응답을 기다리지 않고,
+    바로 request body를 보낼 수 있다.
+
+    따라서 server는 100-continue를 받으면 100 Continue reponse를
+    보내자마자, request body를 읽거나, (error) status code를 보내야 한다.
+    
+    status code를 보낼 경우, connection을 끊거나, request body를 다 읽은 다음
+    무시한다. 
+
+***** Responding for HTTP/1.1 Clients
+
+      100-continue를 받으면:
+
+      - OK: 100-continue status를 리턴하고, 나머지 body를 읽는다
+      - OK: 이미 body가 들어온 경우, 100-continue status를 안보낼 수도 있다.
+      - ERR: 에러 리턴하고, connection을 유지하거나 끊을 수 있다.
+
+
+      100-continue를 받지 않은 경우에도:
+
+      - 100-continue status를 보낼 수도 있다. (HTTP/1.1 경우에만)
+        
+***** Responding for HTTP/1.0 Clients
+
+      100-continue를 받으면:
+
+      - OK: 나머지 body를 읽는다.
+      
+
+*** POST example with 100 Continue
+
+#+BEGIN_EXAMPLE
+POST /~cinsk/test.cgi HTTP/1.1^M
+User-Agent: curl/7.35.0^M
+Host: www.cinsk.org^M
+Accept: */*^M
+Content-Length: 244^M
+Expect: 100-continue^M
+Content-Type: multipart/form-data; boundary=------------------------f7b85891c92dafdb^M
+^M
+HTTP/1.1 100 Continue^M
+^M
+--------------------------f7b85891c92dafdb^M
+Content-Disposition: form-data; name="password"^M
+^M
+why^M
+--------------------------f7b85891c92dafdb^M
+Content-Disposition: form-data; name="name"^M
+^M
+cinsk^M
+--------------------------f7b85891c92dafdb--^M
+HTTP/1.1 200 OK^M
+Date: Fri, 11 Apr 2014 08:20:49 GMT^M
+Server: Apache^M
+Transfer-Encoding: chunked^M
+Content-Type: text/html^M
+^M
+57d^M
+<html>
+<head>
+  <title>CGI script output</title>
+</head>
+<body>
+<h1>Python CGI script</h1>
+<form action="test.cgi" method="post"                           enctype="multipart/form-data">
+<p>Name: 
+<input name="name" type="text"></input></p>
+<p><input type="file" name="upload"></input></p>
+<p><input type="submit"></input></p>
+<hr/>
+<p>Name:  cinsk </p>
+<pre>Form Variables
+password = ['why']
+name = ['cinsk']
+</pre>
+<pre>Environments Variables
+SERVER_SOFTWARE = Apache
+SCRIPT_NAME = /~cinsk/test.cgi
+SERVER_SIGNATURE = <address>Apache Server at www.cinsk.org Port 80</address>
+
+REQUEST_METHOD = POST
+SERVER_PROTOCOL = HTTP/1.1
+QUERY_STRING = 
+PATH = /bin:/sbin:/bin:/sbin:/usr/bin:/usr/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+CONTENT_LENGTH = 244
+HTTP_USER_AGENT = curl/7.35.0
+SERVER_NAME = www.cinsk.org
+REMOTE_ADDR = 210.94.41.89
+GIT_HTTP_EXPORT_ALL = 
+SERVER_PORT = 80
+GIT_PROJECT_ROOT = /var/lib/git
+SERVER_ADDR = 121.168.108.138
+DOCUMENT_ROOT = /var/www/localhost/htdocs
+SCRIPT_FILENAME = /home/cinsk/public_html/test.cgi
+SERVER_ADMIN = root@localhost
+REMOTE_USER = $REDIRECT_REMOTE_USER=
+HTTP_HOST = www.cinsk.org
+HTTP_EXPECT = 100-continue
+REQUEST_URI = /~cinsk/test.cgi
+HTTP_ACCEPT = */*
+GATEWAY_INTERFACE = CGI/1.1
+REMOTE_PORT = 47946
+CONTENT_TYPE = multipart/form-data; boundary=------------------------f7b85891c92dafdb
+UNIQUE_ID = U0el4X8AAAEAABGeZ1gAAAAB
+</pre>
+</body>
+</html>
+^M
+0^M
+^M
+#+END_EXAMPLE
+
+*** POST/PUT stream handler
+
+    evhttp가 전체 stream(e.g. multipart)을 받아서 분석해서 CB에 넘기는 구조가
+    아니라, CB에게 stream chunk (e.g. 1MB? 16MB? configurable parameter)를
+    호출하는 구조?
+
+    - CB를 등록할 때, CHUNKED type, SIMPLE type을 지정하도록 하고,
+    - SIMPLE type인 경우, evhttp가 stream을 parsing한 다음, 그 결과를
+      전달하도록 함.
+    - CHUNKED type인 경우, configurable parameter에 따라
+      chunk 단위로 끊어서 전달. 이 때, control yield할 수 있는
+      함수를 전달
+    - STREAM type인 경우, thread pool을 만들어, 해당 thread에서
+      CB를 호출, 이 CB는 STREAM이 끝나기 전에 
+      하거나,  또는 thread pool을 사용?
+
+* Chunked Encoding
+
+#+BEGIN_SRC sh
+  $ curl -H 'Transfer-Encoding: chunked' -T ~/img/c.jpg \
+         http://localhost/~cinsk/test.cgi
+#+END_SRC
+
+  Wireshark packets:
+
+#+BEGIN_EXAMPLE
+  PUT /~cinsk/test.cgi HTTP/1.1^M
+  User-Agent: curl/7.31.0^M
+  Host: localhost^M
+  Accept: */*^M
+  Transfer-Encoding: chunked^M
+  Expect: 100-continue^M
+  ^M
+  HTTP/1.1 100 Continue^M
+  ^M
+  13c0^M
+  ......JFIF.....H.H......Created with The GIMP...C...............
+  .
+  
+  ...
+  0^M
+#+END_EXAMPLE
+
+
+* httpconn states
+
+*** receving request line + request header
+    read until CRLFCRLF found
+
+    if Transfer-Encoding is not understandable, return 501 (Unimplemented)
+
+#+BEGIN_EXAMPLE
+    Transfer-Encoding: gzip
+    Transfer-Encoding: chunked  # <- shoud be the last Transfer-Encoding
+#+END_EXAMPLE
+
+    Since TE can be appeared multiple times, this field should not be
+    stored in 'hdrstore' of 'httpconn' struct.  Rather, 'httpconn' struct
+    may contains:
+
+#+BEGIN_SRC c
+  #define MAX_TRANSFER_ENCODING   4
+  
+  struct httpconn {
+    // For example, if we received two TE headers, (first 'gzip', then
+    // 'chunked') TE[0] will be HCTE_GZIP, and TE[1] will be
+    // HCTE_CHUNKED.  The rest TE elements will be zero.
+    te[MAX_TRANSFER_ENCODING];
+  };
+#+END_SRC
+
+    If the request method is either POST or PUT, and if ~TE[0]~ is not
+    =HCTE_IDENTITY=, and if there is no =Content-Length=, then the server
+    may response with 400 (bad request), or 411 (length-required).
+
+    Personally, response 400 and disconnect may be the best option.
+
+*** receiving request body
+    depending on the Transfer-Encoding; 
+    chunked, identity, gzip, compress, deflate (all case-insensitive)
+
+*** =RECV_REQ_BODY= state
+
+    - BS: =req_body_size=
+    - BR: =req_body_rest=
+    - CS: =req_chnk_size=
+    - CR: =req_chnk_rest=
+
+    |     BS |     BR | CS |     CR | description                             |
+    |--------+--------+----+--------+-----------------------------------------|
+    |     -1 |     -1 | -1 |     -1 | starting condition, or chunked but      |
+    |        |        |    |        | the chunk size is not completed yet     |
+    | N (>0) |      N | -1 |     -1 | about to receive the req body           |
+    | N (>0) | M (<N) | -1 |     -1 | middle of receiving the req body        |
+    |     -1 |     -1 |  N |      N | CS received, about to receive the chunk |
+    |     -1 |     -1 |  N | M (<N) | middle of receiving the chunk           |
+    |     -1 |     -1 |  N |      0 | next chunk size is not completed yet.   |
+    |     -1 |     -1 |  0 |      ? | final chunk size received               |
+    |        |        |    |        |                                         |
+
+    - BS: =req_body_size=
+    - BR: =req_body_rest=
+    - C:  =req_body_chunked=
+
+    | C | BS     | BR     | description                                  |
+    |---+--------+--------+----------------------------------------------|
+    | 0 | -1     | -1     | started, no body size, error                 |
+    | 1 | -1     | -1     | started, the chunk size is not completed yet |
+    | 0 | N (>0) | N      | about to receive the req body                |
+    | 0 | N (>0) | M (<N) | middle of receiving the req body             |
+    | 1 | N      | N      | CS received, about to receive the chunk      |
+    | 1 | N      | M (<N) | middle of receiving the chunk                |
+    | 1 | N      | 0      | next chunk size is not completed yet.        |
+    | 1 | 0      | ?      | chunk size received                          |
+
+
+* Performance
+
+#+BEGIN_SRC sh
+  $ weighttp -c 100 -t 8 -n 10000 http://⁠localhost:8082/
+#+END_SRC
+
+  | threads | process | keepalive | best TPS |   gwan |
+  |---------+---------+-----------+----------+--------|
+  |       1 |       1 | no        |    23744 |        |
+  |       1 |       1 | yes       |    72625 |        |
+  |       4 |       1 | no        |    57861 |  53876 |
+  |       4 |       1 | yes       |   170059 | 304413 |
+  |       1 |       4 | no        |    54381 |        |
+  |       1 |       4 | yes       |   199820 |        |
+  
+
+* Troubleshooting
+
+
+*** iptables: TCP conntrack table full, dropping packet
+
+*** TCP: TCP: Possible SYN flooding on port XXXX. Dropping request.  Check SNMP counters.
+
+    cause: small number of backlog parameter in =listen(2)=⁠.
+
+#+BEGIN_SRC c
+  int fd;
+  struct sockaddr_in addr;
+
+  fd = socket(PF_INET, SOCK_STREAM, 0);
+
+  addr.sin_addr.s_addr = INADDR_ANY;
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(port);
+  bind(fd, (struct sockaddr *)&addr, sizeof(addr));
+  listen(fd, 5);
+#+END_SRC
+
+  System backlog limit:
+
+#+BEGIN_SRC sh
+  $ cat /proc/sys/net/ipv4/⁠tcp_max_syn_backlog
+  12000
+  $ cat /proc/sys/net/core/somaxconn
+  12000
+#+END_SRC
+
+
+* Archives                                                          :ARCHIVE:
+*** pool management
+
+    - 언제 =str_pool=⁠과 =rsp_pool=⁠을 쓸 수 있는지 describe해야 함.
+    - 매 request 처리 때마다 =str_pool=⁠과 =rsp_pool=⁠의 어떤 부분부터
+      free할 것인지 describe 및, 필요 내용 구현이 필요함.
+*** Buffers
+***** TODO For finding, and advacing, it's better to use a struct.
+
+#+BEGIN_SRC c
+  struct buf_position {
+    struct bufnode *node;
+    const char *ptr;
+  }
+#+END_SRC
+
+***** TODO Modify (find, advance, etc.) not to iterate to find the target node.
+
+*** response
+
+#+BEGIN_SRC c
+  struct httpconn {
+    struct {
+      int states;
+      char *buf;
+      char *bufend;
+      char *sent;
+
+      char *hdrs;       // points to the headers in rsp_pool[1]
+      char *hdrsend;
+      char *body;       // points to the body in rsp_pool[0]
+      char *bodyend;
+
+      int fd;
+    } rsp;
+  }; 
+#+END_SRC
+
+
+  - 현재 headers를 보내고 있는지, body를 보내고 있는지 상태가 필요.
+  - user callback이 complete body를 전달했는지 여부가 필요
+  - 현재 다루고 있는 버퍼(headers or bodybuf) 정보: buffer_ptr, size, sent_ptr
+
+  - 나중에 body를 fd로 받을 경우에 대한 구조가 필요.
+
+
+***** httpconn: Write callback
+
+#+BEGIN_SRC c
+  httpconn *hc;
+  int written, remains;
+  
+  if (hc->rsp.sent < hc->rsp.bufend) {
+    remains = hc->rsp.bufend - hc->rsp.sent;
+    written = write(hc->io.fd, hc->rsp.sent, remains);
+  
+    if (written == 0) {
+      if (errno == EINTR || errno == EWOULDBLOCK)
+        return;
+      /* TODO: what now? */
+    }
+    else if (written == remains) {
+      /* we sent all */
+    }
+    else {
+      /* partially sent */
+      hc->rsp.sent += written;
+      feed_event;
+      return;
+    }
+  
+    if (hc->rsp.states & SENDING_HEADERS) {
+      if (hc->rsp.states & USE_COPYFILE) {
+        /* not implemented yet */
+      }
+      else {
+        hc->rsp.buf = hc->rsp.body;
+        hc->rsp.bufend = hc->rsp.bodyend;
+        hc->rsp.sent = hc->rsp.buf;
+        hc->rsp.states &= ~(SENDING_HEADERS);
+        hc->rsp.states |= ~(SENDING_BODY);
+      }
+      feed_event;
+    }
+    else {                        /* sending body */
+      if (hc->rsp.states & USE_COPYFILE) {
+        /* not implemented yet */
+        close(hc->rsp.fd);
+      }
+      else {                      /* current body chunk is fully sent */
+        if (hc->rsp.states & USERCB_FIN) {
+          //stop;
+        }
+        else {
+          
+          if (hc->cb(...) == 0)
+            hc->rsp.states |= USERCB_FIN;
+            
+        }
+      }
+    }
+  }
+  
+  
+#+END_SRC
+
+
+
+*** redesign of httpconn
+
+    member: ev_io io // for connection
+    member: ev_timer rtimer, wtimer // for timeout
+
+    member: request_method // HEAD, GET, POST, PUT, DELETE, ...
+
+    member: buffer for read. (request line, request headers, request body)
+
+    member: buffer for write. (response line, response headers, response body)
+
+
+    Transfer-encoding: chunked | identity | gzip | compress | deflate
+
+
+    client -> Accept-Encoding
+    
+    Transfer-Encoding <- server
+
+    client (decode transfer-encoding, then apply content-encoding)
+
+
+    dynamic content인 경우, chucnked encoding으로 보내는 것이 나을 듯.
+
+*** Buffers
+
+    한 httpconn에 대해 read/write buffer를 두 개를 두는 것이 맞는 design인가?
+
+    "100-Continue"를 효과적으로 처리하기 위해서 맞는 듯.
+
+

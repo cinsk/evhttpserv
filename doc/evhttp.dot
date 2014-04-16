@@ -1,0 +1,58 @@
+digraph {
+	graph [ranksep=0.25, fontname=Arial, nodesep=0.125];
+	node [fontname=Arial, style=filled, height=0, width=0, shape=box, fontcolor=black, fontsize=12];
+	edge [fontname=Arial, fontsize=8];
+        
+        main [shape=ellipse];
+
+        main -> accept [label="new connection"];
+        
+        accept -> worker [label="send FD\nvia socketpair()"];
+        accept -> main;
+
+        main -> quit [label="quit request"];
+
+        quit [shape=egg, label="graceful\nquit"]
+        quit -> worker [label="CLOSE\nsocketpair pipe"];
+
+        quit -> join;
+        
+        join [label="waiting\nfor\nthread exit"];
+
+        join -> end;
+        end [shape=ellipse];
+        
+        worker [shape=ellipse label="worker\nthread"];
+
+        worker -> ev_read [label="read event"]
+        worker -> ev_write [label="write event"]
+        worker -> ev_close [label="close event"]
+        
+        ev_read [shape=egg, label="READ"];
+        ev_write [shape=egg, label="WRITE"];
+        ev_close [shape=egg, label="CLOSE"];
+        
+        
+        ev_read -> req_read;
+        req_read [label="read\nrequest"];
+        req_read -> rcomplete_p
+
+        rcomplete_p [shape=diamond, label="request\ncomplete?"]
+        rcomplete_p -> worker [label="no\npartial\nrequest\nreceived"]
+        rcomplete_p -> callback [label="yes\ncomplete\nrequest"]
+
+        callback [label="request\nhandling\nCALLBACK"];
+        callback -> worker
+
+        ev_write -> rsp_write;
+        rsp_write [label="send\nrequest"];
+        rsp_write -> wcomplete_p;
+
+        wcomplete_p [shape=diamond, label="response\nbody\ncomplete?"];
+
+        wcomplete_p -> callback [label="no\nneed\nmore"]
+        wcomplete_p -> worker [label="yes\nresponse\nfinished"];
+
+        ev_close -> worker_end;
+        worker_end -> join;
+}

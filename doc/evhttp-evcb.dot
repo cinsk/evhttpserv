@@ -1,0 +1,101 @@
+digraph {
+	graph [ranksep=0.25, fontname=Arial, nodesep=0.125];
+	node [fontname=Arial, style=filled, height=0, width=0,
+              shape=box, fontcolor=black, fontsize=12];
+	edge [fontname=Arial, fontsize=8];
+
+        libev -> main [label="event received"];
+        
+        main [shape=ellipse, label="ev_httpconn_io_cb"];
+        main -> revents;
+        
+        revents [shape=diamond, label="type of event"];
+
+        revents -> readcheck [label="EV_READ"];
+        readcheck [shape=diamond, label="check state"];
+
+        readcheck -> recv_req [label="RECV_REQ"];
+        readcheck -> recv_body [label="RECV_BODY"];
+        
+        recv_req [shape=egg];
+        
+        recv_req -> read1 [label="yes"];
+
+        read1 [label="read"];
+        read2 [label="read"];
+        
+        read1 -> stop [label="read failed"];
+        read1 -> hdrcheck;
+        hdrcheck [shape=diamond, label="received\ncomplete\nheaders?"];
+        hdrcheck -> libev [label="no"];
+        hdrcheck -> parse_hdrs [label="yes"];
+        parse_hdrs [label="parse\nrequest\nheaders"];
+        parse_hdrs -> methods;
+
+        parse_hdrs -> chunkedp [color="blue", label="Transfer-Encoding:"];
+        parse_hdrs -> keepalive [color="blue", label="Connection:"];
+        
+        methods [shape=diamond, label="HTTP\nrequest\nmethod"];
+        methods -> callback1 [label="GET\nHEAD\nDELETE\nOPTIONS"];
+        callback1 -> send_rsp;
+
+        send_rsp [shape=egg];
+        
+        methods -> recv_body [label="POST\nPUT"];
+
+        recv_body [shape=egg];
+        recv_body -> read2;
+        read2 -> stop [label="read failed"];
+
+        read2 -> chunkedp;
+        chunkedp [shape=diamond, label="chunked\nencoding?"];
+        chunkedp -> niy [label="yes"];
+        chunkedp -> body_complete;
+        body_complete [shape=diamond, label="received\nfull\nbody?"];
+
+        body_complete -> callback2 [label="no"];
+        callback2 -> libev;
+        body_complete -> callback3 [label="yes"];
+        callback3 -> send_rsp;
+
+        callback1 [label="callback"];
+        callback2 [label="callback"];
+        callback3 [label="callback"];
+        
+        
+        revents -> writechk [label="EV_WRITE"];
+
+        writechk [shape=diamond, label="check state"];
+        writechk -> send_rsp [label="SEND_RSP"];
+        writechk -> send_body [label="SEND_BODY"];
+
+        send_rsp -> write1;
+        write1 [label="send\nresponse\nheaders"];
+        write1 -> write1p;
+        write1p [shape=diamond, label="completed?"];
+        write1p -> libev [label="no"];
+        write1p -> send_body [label="yes"];
+
+        send_body [shape=egg];
+        
+        send_body -> chunked2;
+        chunked2 [shape=diamond, label="need\nchunked TE?"];
+        chunked2 -> niy [label="yes"];
+        chunked2 -> write2 [label="no"];
+        write2 [label="send\nresponse\nbody"];
+        write2 -> write2p;
+        write2p [shape=diamond, label="completed?"];
+        write2p -> libev [label="no"];
+        write2p -> keepalive [label="yes"];
+
+        keepalive [shape=diamond, label="keepalive?"];
+        keepalive -> recv_req [label="yes"];
+        keepalive -> libev [color="red", label="yes\nfair but\nslow"];
+        keepalive -> stop [label="no"];
+        
+
+        stop [shape=egg, label="Disconnect"];
+        niy [label="not\nimplemented\nyet"];
+        
+}
+
