@@ -73,27 +73,22 @@ req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
     return 0;
 
   else if (revents & EV_READ) {
-    w->rsp_code = 200;
-    xdebug(0, "Request(%s, %s): %s", w->method_string, w->version, w->uri);
 
-#if 0
-    {
-      char *hdrs;
-      hdrstore_fill(&w->req_hdrs, &pool, NULL, 0);
-      xobs_1grow(&pool, '\0');
-      hdrs = xobs_finish(&pool);
-      fputs(hdrs, stderr);
-      xobs_free(&pool, hdrs);
+    if (w->method == HM_GET) {
+      w->rsp_code = HTTP_OK;
+      xdebug(0, "Request(%s, %s): %s", w->method_string, w->version, w->uri);
+      buffer_printf(&w->obuf, "<html><body>hello</body></html>\n");
+      // sprintf(v, "%u", xobs_object_size(&w->rsp_pool));
+      // hdrstore_set(&w->rsp_hdrs, "Content-Length", v);
+      hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive");
+
+      xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
+      hdrstore_set(&w->rsp_hdrs, "Content-Length", xobs_finish(&w->hdr_pool));
     }
-#endif
+    else {
+      w->rsp_code = HTTP_NOT_IMPLEMENTED;
+    }
 
-    buffer_printf(&w->obuf, "<html><body>hello</body></html>\n");
-    // sprintf(v, "%u", xobs_object_size(&w->rsp_pool));
-    // hdrstore_set(&w->rsp_hdrs, "Content-Length", v);
-    hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive");
-
-    xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
-    hdrstore_set(&w->rsp_hdrs, "Content-Length", xobs_finish(&w->hdr_pool));
   }
 
   return 0;

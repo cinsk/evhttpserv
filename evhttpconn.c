@@ -54,6 +54,8 @@ static void ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents);
 static __inline__ void prepare_recv_req(struct ev_loop *loop, ev_httpconn *hc);
 static __inline__ void prepare_send_rsp(struct ev_loop *loop, ev_httpconn *hc);
 
+static __inline__ int prepare_recv_body(struct ev_loop *loop, ev_httpconn *hc);
+
 static const char *method2str(HTTP_METHOD method);
 static HTTP_METHOD str2method(const char *method);
 static __inline__ int str2te(const char *s);
@@ -326,6 +328,7 @@ str2method(const char *method)
   while (http_methods[i].name != 0) {
     if (strcmp(http_methods[i].name, method) == 0)
       return http_methods[i].method;
+    i++;
   }
   return HM_UNKNOWN;
 }
@@ -547,6 +550,9 @@ load_req_line_headers(ev_httpconn *hc, char *req)
       hdrstore_set(&hc->req_hdrs, name, value);
   }
 
+  if (hc->req_te[0] == HTTP_TE_NONE)
+    hc->req_te[0] = HTTP_TE_IDENTITY;
+
   {
     const char *val;
 
@@ -586,10 +592,34 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
   /* TODO: handle pattern matching to find-out the exact CB. */
 
   /* TODO: how to pass EOB to the callback? */
-  if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0) {
-    hc->eob = 1;
 
-    // if (!hc->body_chnk && calc_len) set_content_length(hc);
+  switch (hc->method) {
+  case HM_GET:
+  case HM_HEAD:
+    if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0) {
+      hc->eob = 1;
+      // if (!hc->body_chnk && calc_len) set_content_length(hc);
+    }
+    break;
+
+  case HM_POST:
+#ifdef EVHTTP_HANDLE_FORM
+    /* TODO:  */
+
+    if (eob) {
+      if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0) {
+        hc->eob = 1;
+        // if (!hc->body_chnk && calc_len) set_content_length(hc);
+      }
+    }
+#endif  /* EVHTTP_HANDLE_FORM */
+    break;
+
+  case HM_PUT:
+  default:
+    hc->eob = 1;
+    hc->rsp_code = HTTP_NOT_IMPLEMENTED;
+    break;
   }
 }
 
@@ -628,6 +658,31 @@ prepare_send_rsp(struct ev_loop *loop, ev_httpconn *hc)
     ev_io_start(loop, &hc->io);
   }
 }
+
+
+static __inline__ int
+prepare_recv_body(struct ev_loop *loop, ev_httpconn *hc)
+{
+  static char rsp_continue[] = "HTTP/1.1 100 Continue\r\n\r\n";
+  ssize_t written;
+  char *exp = hdrstore_get(&hc->req_hdrs, "Expect");
+
+  hc->state = HC_RECV_BODY;
+
+  if (exp && strcmp(exp, "100-continue") == 0) {
+    written = write(hc->io.fd, rsp_continue, sizeof(rsp_continue) - 1);
+    if (written == -1) {
+      /* In the current implementation, (even if we received
+       * EAGAIN), we can't handle this situation due to the
+       * implementation defect. */
+      xdebug(0, "write(2) failed for 100 continue");
+      ev_httpconn_stop(loop, hc);
+      return 0;
+    }
+  }
+  return 1;
+}
+
 
 static void
 ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
@@ -678,12 +733,12 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
         goto send_rsp;
       }
 
-      hc->state = HC_RECV_BODY;
-
       if (!set_reqbody_params(hc)) {
         prepare_send_rsp(loop, hc);
         goto send_rsp;
       }
+
+      prepare_recv_body(loop, hc);
       goto recv_body;
     }
     else if (hc->state == HC_RECV_BODY) {
@@ -711,24 +766,25 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
             // we got the whole body.
             do_callback(loop, hc, 1);
             /* Now, we sent all request body to the do_callback */
-            hc->state = HC_SEND_RSP;
-            /* TODO: prepare for SEND_RSP? */
+            prepare_send_rsp(loop, hc);
             goto send_rsp;
           }
           else {
             // we have the partial body.
             do_callback(loop, hc, 0);
           }
-          buffer_advance(&hc->ibuf, pos.node, pos.ptr, 0);
-          hc->body_rest -= remains;
+
+          if (remains != (size_t)-1) {
+            buffer_advance(&hc->ibuf, pos.node, pos.ptr, 0);
+            hc->body_rest -= remains;
+          }
         }
         else {                  /* hc->body_rest == 0 */
           // Unless the request body is actually zero byte, the
           // control can't be here.
           do_callback(loop, hc, 1);
           /* Now, we sent all request body to the do_callback */
-          hc->state = HC_SEND_RSP;
-          /* TODO: prepare for SEND_RSP? */
+          prepare_send_rsp(loop, hc);
           goto send_rsp;
         }
       }
@@ -754,7 +810,7 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
         if (errno == EINTR || errno == EAGAIN)
           return;
         if (errno != ECONNRESET)
-          xdebug(errno, "ev_httpconn_write_cb: write(2) failed");
+          xdebug(errno, "write(2) failed");
         ev_httpconn_stop(loop, hc);
       }
       else {
