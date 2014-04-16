@@ -14,7 +14,9 @@
 
 /* BACKPAD will be used for storing chunk size when TE is 'chunked' */
 #define BACKPAD_SIZE    16
-#define REARPAD_SIZE    16
+
+/* Read RFC2046 for the maximum length of the multipart boundary (around 70) */
+#define REARPAD_SIZE    80
 
 
 static struct bufnode *bufnode_new(size_t size);
@@ -157,7 +159,7 @@ buffer_fill_fd(struct buffer *b, int fd, size_t size, int *eof)
         return -1;
     }
     else if (readch == 0) {            /* EOF */
-      if (*eof)
+      if (eof)
         *eof = 1;
       return total;
     }
@@ -417,6 +419,7 @@ buffer_copy(struct xobs *obs, struct buffer *b, const bufpos *pos)
   return total;
 }
 
+
 ssize_t
 buffer_flush(struct buffer *b, struct bufnode *n, char *next, int fd)
 {
@@ -531,33 +534,6 @@ buffer_seek(struct buffer *b, off_t offset, int whence, bufpos *pos)
 }
 
 
-size_t
-buffer_size(struct buffer *b, const bufpos *pos)
-{
-  size_t total = 0;
-  bufpos p;
-  struct bufnode *bp;
-
-  if (!b->head)
-    return 0;
-
-  if (pos)
-    p = *pos;
-  else {
-    p.node = b->head;
-    p.ptr = p.node->begin;
-  }
-
-  total = p.node->end - p.ptr;
-
-  for (bp = p.node->next; bp != NULL; bp = bp->next) {
-    total += bp->end - bp->begin;
-  }
-
-  return total;
-}
-
-
 void
 buffer_dump(FILE *fp, struct buffer *b)
 {
@@ -582,146 +558,36 @@ buffer_dump(FILE *fp, struct buffer *b)
 }
 
 
-#if 0
-void
-buf_advance(struct buf *buf, char *spot)
-{
-  assert(spot >= buf->begin);
-  assert(spot <= buf->end);     /* TODO: (spot < buf->end)? */
-
-  if (spot == buf->begin)
-    return;
-
-  if (spot == buf->end) {       /* buf empty */
-    buf->begin = buf->last = buf->end = buf->data;
-  }
-  else if (spot >= buf->data + (buf->size >> 2)) {
-    size_t remains = buf->end - spot;
-    memmove(buf->data, spot, remains);
-    buf->data = buf->begin = buf->last;
-    buf->end = buf->data + remains;
-  }
-  else {
-    buf->begin = spot;
-    if (buf->last < spot)
-      buf->last = buf->begin;
-  }
-}
-
-
-/*
- * Flush the buf contents from BUF->BEGIN to HERE.
- */
 int
-buf_flush_fd(struct buf *buf, int fd, char *here)
+buffer_truncate(struct buffer *b, bufpos *from)
 {
-  size_t remains;
-  ssize_t written;
+  bufpos pos;
+  struct bufnode *p, *q;
+  size_t ncount = 0;
 
-  if (!here)
-    here = buf->end;
-  remains = here - buf->begin;
-
-  written = write(fd, buf->begin, remains);
-  if (written == -1) {
-    if (errno == EAGAIN || errno == EINTR)
+  if (from)
+    pos = *from;
+  else {
+    pos.node = b->head;
+    if (!pos.node)
       return 0;
-    else
-      return -1;
+    pos.ptr = b->head->begin;
   }
-  else {
-    buf_advance(buf, buf->begin + written);
-    return written;
+
+  ncount = pos.node->end - pos.ptr;
+  pos.node->end = pos.ptr;
+
+  p = pos.node->next;
+  while (p) {
+    q = p->next;
+    ncount += p->end - p->begin;
+    free(p);
+    p = q;
   }
+
+  pos.node->next = 0;
+  return ncount;
 }
-
-
-/*
- *
- * Fill BUF by reading from FD.
- *
- * returns:
- *
- *   buf full (-1, errno = ENOMEM)
- *   read error (-1, errno = ERROR)
- *   EINTR (0, errno = EINTR)
- *   EOF  (0, errno = 0)
- *   read N byte(s) (read-bytes, errno = ??)
- */
-int
-buf_fill_fd(struct buf *buf, int fd)
-{
-  size_t remains = buf->data + buf->size - buf->end;
-  ssize_t readch;
-
-  /* TODO: EPIPE handling?? */
-
-  buf->last = buf->end;
-
-  if (remains == 0) {           /* BUF is full */
-    errno = ENOMEM;
-    return -1;                  /* return what?? */
-  }
-
-  readch = read(fd, buf->end, remains);
-  if (readch == -1) {
-    if (errno == EINTR || errno == EAGAIN)
-      return 0;                 /* return what? */
-    else
-      return -1;                /* return what? error */
-  }
-  else if (readch == 0) {            /* EOF */
-    errno = 0;
-    return 0;                        /* return what? */
-  }
-
-  buf->end += readch;
-  return readch;
-}
-
-
-static int
-fdprintf(int fd, const char *format, ...)
-{
-  va_list ap;
-  int len;
-  char *buf;
-
-  va_start(ap, format);
-  len = vsnprintf(0, 0, format, ap);
-  va_end(ap);
-
-  buf = malloc(len + 1);
-  va_start(ap, format);
-  len = vsnprintf(buf, len + 1, format, ap);
-  va_end(ap);
-
-  write(fd, buf, len);
-  free(buf);
-  return len;
-}
-
-
-read_cb()
-{
-  rbuf rb;
-
-  rb.fill();
-
-  offset = rb.parse_request();
-  if (offset == -1) {           /* not fully received for complete request */
-    return;
-  }
-
-  if (can_handle_request()) { /* GET, HEAD, OPTIONS or DELETE */
-    rb.advance(offset);
-    call_request_handler();
-  }
-  else {                      /* POST or PUT */
-    call_post_or_put_handler();
-  }
-}
-#endif
 
 
 #ifdef TEST_BUFFER
@@ -770,10 +636,11 @@ main(int argc, char *argv[])
   //set_nonblock(1);
 
   buffer_init(&b, 64);
-  buffer_fill_fd(&b, 0, -1);
+  buffer_fill_fd(&b, 0, -1, 0);
 
   buffer_dump(stderr, &b);
 
+  printf("size: %zd\n", buffer_size(&b, 0));
   printf("========================\n");
 
   {
@@ -808,12 +675,13 @@ main(int argc, char *argv[])
     printf("pos.node = %p, pos.ptr = %p\n", pos.node, pos.ptr);
   }
 
+  printf("========================\n");
   buffer_flush(&b, NULL, NULL, STDOUT_FILENO);
 
   // buffer_clear(&b);
   printf("========================\n");
 
-  buffer_dump(stderr, &b);
+  //buffer_dump(stderr, &b);
   return 0;
 }
 #endif  /* TEST_BUFFER */

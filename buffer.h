@@ -95,12 +95,6 @@ void buffer_advance(struct buffer *b, struct bufnode *n,
  */
 int buffer_seek(struct buffer *b, off_t offset, int whence, bufpos *pos);
 
-/*
- * Return the number of byte(s) that the buffer B holds.
- *
- * If POS is non-null, the counting starts from POS.
- */
-size_t buffer_size(struct buffer *b, const bufpos *pos);
 
 /*
  * Flush (write) the buffer contents into the file FD.
@@ -163,6 +157,15 @@ size_t buffer_copy(struct xobs *obs, struct buffer *b, const bufpos *pos);
 struct bufnode *buffer_grow_capacity(struct buffer *b, size_t size);
 
 
+/*
+ * truncate B from POS to the end of the buffer.
+ *
+ * Returns the number of byte(s) that discarded.
+ *
+ * If POS is null, it is considered as the beginning of the buffer.
+ */
+int buffer_truncate(struct buffer *b, bufpos *pos);
+
 #define buffer_1add_fast(b, ch)        (*(b)->tail->end++ = ch)
 
 static __inline__ int
@@ -192,8 +195,77 @@ buffer_fill(struct buffer *b, const void *data, size_t size)
 }
 
 
+/*
+ * Iterate all bufnode of BUF, starting from POS.  If POS is NULL, it
+ * is considered as the first node of BUF.  ITER should be a l-value
+ * of bufnode type.  On each iteration, ITER.node will points the
+ * BUFNODE and ITER.ptr will be set to the beginning of the BUFNODE,
+ * except on the first iteration; ITER.ptr will be set to either
+ * POS->ptr or the beginning of the BUF.
+ *
+ * See buffer_size() for the example usage of BUFNODE_ITER().
+ */
+#define BUFNODE_ITER(buf, pos, iter, tmp)                               \
+  for (((pos) ? ((tmp = *(pos)), 0) :                                   \
+        (tmp.node = buf->head,                                          \
+         tmp.ptr = ((tmp.node) ? tmp.node->begin : 0), 0)),             \
+         iter = tmp;                                                    \
+       tmp.node != NULL;                                                \
+       ((tmp.node = tmp.node->next),                                    \
+        (tmp.ptr = (tmp.node) ? tmp.node->begin : 0)), iter = tmp)
+
+
+/*
+ * Return the number of byte(s) that the buffer B holds.
+ *
+ * If POS is non-null, the counting starts from POS.
+ */
+static __inline__ size_t
+buffer_size(struct buffer *b, const bufpos *pos)
+{
+  size_t total = 0;
+  bufpos p, tmp;
+
+  BUFNODE_ITER(b, pos, p, tmp) {
+    total += p.node->end - p.ptr;
+  }
+
+  return total;
+}
+
+
+static __inline__ size_t
+buffer_node_count(struct buffer *b, bufpos *from)
+{
+  bufpos pos, tmp;
+  size_t ncount = 0;
+
+#if 1
+  BUFNODE_ITER(b, from, pos, tmp) {
+    (void)pos.node;
+    ncount++;
+  }
+#else
+  if (from)
+    pos = *from;
+  else {
+    pos.node = b->head;
+    if (!pos.node)
+      return 0;
+    pos.ptr = b->head->begin;
+  }
+
+  for (ncount = 0; pos.node != NULL; pos.node = pos.node->next, ncount++)
+    ;
+#endif
+
+  return ncount;
+}
+
+
 #if 0
 /* TODO */
+
 // return the number of byte(s) in B from POS to end of the buffer.
 // If POS is NULL, the beginning of the buffer is used.
 size_t buffer_size(struct buffer *b, const bufpos *pos);
