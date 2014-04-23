@@ -1,14 +1,21 @@
 
-KCDB_CFLAGS:=`kcutilmgr conf -i`
-KCDB_LIBS:=`kcutilmgr conf -l`
+#KCDB_CFLAGS:=`kcutilmgr conf -i`
+#KCDB_LIBS:=`kcutilmgr conf -l`
 #CFLAGS=-Wall -g3 $(KCDB_CFLAGS)
 #LIBS=-lsqlite3 -lev $(KCDB_LIBS)
 
 CFLAGS=-Wall -g3
 #CFLAGS=-Wall -O2 -fomit-frame-pointer -DNDEBUG
-LIBS=-lev -ltcmalloc -lpthread
+LIBS=-lev -lpthread
 
 OBJS=evhttp.o evhttpconn.o xerror.o xobstack.o hdrstore.o buffer.o hexdump.o
+
+TOPDIR := $(shell pwd)
+LIBOBJS := $(OBJS)
+
+export TOPDIR LIBOBJS LIBS CFLAGS
+
+.PHONY: all clean rebuild test
 
 all: evhttp
 rebuild: clean all
@@ -25,3 +32,7 @@ evhttp: main.o $(OBJS)
 clean:
 	rm -f $(OBJS) main.o
 	rm -f evhttp
+	cd test && $(MAKE) clean
+
+test:
+	cd test && $(MAKE) all
