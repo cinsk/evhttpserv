@@ -29,6 +29,7 @@ buffer_init(struct buffer *b, size_t sizehint)
 {
   b->head = b->tail = 0;
   b->nbuf = 0;
+  b->nbytes = 0;
 
   b->sizehint = sizehint;
 }
@@ -59,6 +60,9 @@ buffer_insert_buf(struct buffer *b, struct bufnode *node)
 }
 
 
+/*
+ * Remove the first bufnode from the buffer, B.
+ */
 static __inline__ struct bufnode *
 buffer_remove_buf(struct buffer *b)
 {
@@ -73,6 +77,8 @@ buffer_remove_buf(struct buffer *b)
   else
     b->head = p->next;
   b->nbuf--;
+  b->nbytes -= (p->end - p->begin);
+
   return p;
 }
 
@@ -124,6 +130,47 @@ buffer_grow_capacity(struct buffer *b, size_t size)
 }
 
 
+int
+buffer_load(struct buffer *b, const void *data, size_t size)
+{
+  /* Design consideration
+   *
+   * Which is better, to fill the last bufnode in B from FD, or
+   * to create new bufnode and fill it from FD?
+   *
+   * Currently, I'll choose the last one. */
+  struct bufnode *nptr;
+  size_t remains;
+  const void *cur = data;
+  const void *end = data + size;
+  bufpos snapshot;
+
+  /* TODO: what happen if B is empty? */
+  buffer_seek(b, 0, SEEK_END, &snapshot);
+
+  while (cur < end) {
+    if ((nptr = buffer_grow_capacity(b, 1)) == 0) {
+      buffer_truncate(b, &snapshot);
+      return -1;
+    }
+
+    /* Because of BACKPAD_SIZE, merely using NPTR->SIZE for REMAINS
+     * is not good. */
+    remains = BUFNODE_AVAIL(nptr);
+    if (cur + remains > end)
+      remains = end - cur;
+
+    memcpy(nptr->end, cur, remains);
+    cur += remains;
+
+    nptr->end += remains;
+    b->nbytes += remains;
+  }
+
+  return 0;
+}
+
+
 ssize_t
 buffer_fill_fd(struct buffer *b, int fd, size_t size, int *eof)
 {
@@ -166,6 +213,7 @@ buffer_fill_fd(struct buffer *b, int fd, size_t size, int *eof)
 
     nptr->end += readch;
     total += readch;
+    b->nbytes += readch;
 
     if (total >= size)
       break;
@@ -195,6 +243,7 @@ buffer_printf(struct buffer *b, const char *format, ...)
   va_end(ap);
 
   nptr->end += len;
+  b->nbytes += len;
 
   return len;
 }
@@ -226,7 +275,10 @@ buffer_find(struct buffer *buf, const void *seed, size_t size,
 
   if (!from.node) {
     from.node = buf->head;
-    from.ptr = from.node->begin;
+    if (from.node)
+      from.ptr = from.node->begin;
+    else
+      from.ptr = 0;
   }
 
   p = from.node;
@@ -259,6 +311,13 @@ buffer_find(struct buffer *buf, const void *seed, size_t size,
   }
 
   return 0;
+}
+
+
+bufpos
+buffer_span(struct buffer *buf, bufpos *from, const char *accept)
+{
+
 }
 
 
@@ -358,10 +417,14 @@ buffer_advance(struct buffer *b, struct bufnode *n, char *next, int offset)
   if (next) {
     assert(n->data <= next && next <= n->data + n->size);
 
+    b->nbytes -= (next - n->begin) + offset;
+
     n->begin = next + offset;
     n->last = next + offset;
   }
   else {
+    b->nbytes -= n->end - n->begin;
+
     n->begin = n->end;
     n->last = n->end;
   }
@@ -420,6 +483,58 @@ buffer_copy(struct xobs *obs, struct buffer *b, const bufpos *pos)
 }
 
 
+size_t
+buffer_copy_range(struct xobs *obs, struct buffer *b,
+                  const bufpos *from, const bufpos *to)
+{
+  bufpos begin, end;
+  size_t total = 0;
+  size_t sz;
+
+  // assert(xobstack_object_size(obs) == 0);
+
+  if (from)
+    begin = *from;
+  else {
+    begin.node = b->head;
+    if (begin.node)
+      begin.ptr = begin.node->begin;
+    else
+      return 0;
+  }
+
+  if (to)
+    end = *to;
+  else {
+    end.node = b->tail;
+    if (end.node)
+      end.ptr = end.node->end;
+    else
+      return 0;
+  }
+
+  while (bufpos_isempty(&begin)) {
+    if (begin.node != end.node) {
+      /* copy the whole contents of BEGIN to OBS */
+      sz = begin.node->end - begin.ptr;
+      xobs_grow(obs, begin.ptr, sz);
+      total += sz;
+    }
+    else {
+      sz = end.ptr - begin.ptr;
+      xobs_grow(obs, begin.ptr, sz);
+      total += sz;
+      break;
+    }
+
+    begin.node = begin.node->next;
+    begin.ptr = begin.node->begin;
+  }
+
+  return total;
+}
+
+
 ssize_t
 buffer_flush(struct buffer *b, struct bufnode *n, char *next, int fd)
 {
@@ -434,38 +549,52 @@ buffer_flush(struct buffer *b, struct bufnode *n, char *next, int fd)
 
   while ((p = b->head) != n && p != NULL) {
     remains = p->end - p->begin;
+
     if (remains > 0) {
       written = write(fd, p->begin, remains);
+
       if (written == -1) {
-        if (errno == EAGAIN || errno == EINTR)
+        if (errno == EAGAIN || errno == EINTR) {
           return total;
+        }
         return -1;
       }
       else {
         total += written;
       }
     }
-    buffer_remove_buf(b);
+    if (written < remains) {    /* on non-blocking FD */
+      buffer_advance(b, p, p->begin + written, 0);
+      return total;
+    }
+    else
+      buffer_remove_buf(b);
     free(p);
   }
 
-  if (!p)
+  if (!p) {
+    /* If following assertion failed, it means that N points invalid
+     * bufnode. */
+    assert(n == 0);
     return total;
+  }
 
-  if (next && b->head == n)
-    remains = next - n->begin;
+  assert(n == p);
+
+  if (next)
+    remains = next - p->begin;
   else
-    remains = n->end - n->begin;
+    remains = p->end - p->begin;
 
-  written = write(fd, n->begin, remains);
+  written = write(fd, p->begin, remains);
   if (written == -1) {
     if (errno == EAGAIN || errno == EINTR)
-      return 0;
+      return total;
     return -1;
   }
   else {
     // n->begin += written;
-    buffer_advance(b, b->head, n->begin + written, 0);
+    buffer_advance(b, b->head, p->begin + written, 0);
     total += written;
   }
   return total;
@@ -617,6 +746,7 @@ int
 main(int argc, char *argv[])
 {
   struct buffer b;
+  int eof;
 
   // socket
 #if 0
@@ -636,12 +766,32 @@ main(int argc, char *argv[])
   //set_nonblock(1);
 
   buffer_init(&b, 64);
-  buffer_fill_fd(&b, 0, -1, 0);
+  buffer_fill_fd(&b, 0, -1, &eof);
 
   buffer_dump(stderr, &b);
 
   printf("size: %zd\n", buffer_size(&b, 0));
   printf("========================\n");
+
+  {
+    bufpos found1, found2;
+    struct xobs po;
+    size_t copied;
+    void *p;
+
+    xobs_init(&po);
+    if (buffer_find(&b, "buffer_init", 11, &found1, NULL)) {
+      if (buffer_find(&b, "buffer_remove_buf", 17, &found2, &found1)) {
+        fprintf(stderr, "COPIED-START ===========\n");
+        copied = buffer_copy_range(&po, &b, &found1, &found2);
+        xerror(0, 0, "copied: %zd byte(s)", copied);
+        p = xobs_finish(&po);
+        hexdump(stderr, 1, 0, p, p + copied);
+        fprintf(stderr, "COPIED-END ===========\n");
+      }
+    }
+    xobs_free(&po, 0);
+  }
 
   {
     bufpos found;

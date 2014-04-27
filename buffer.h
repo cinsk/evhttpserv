@@ -23,14 +23,36 @@ struct buffer {
   struct bufnode *tail;
 
   size_t nbuf;
-
+  size_t nbytes;
   size_t sizehint;
 };
 
 #define BUFNODE_AVAIL(n)        ((n)->data + (n)->size - (n)->end)
 
+#define BUFPOS_BEGIN(buf, src)  ({ bufpos p;    \
+      if (src)                                  \
+        p = *(src);                             \
+      else {                                    \
+        p.node = (buf)->head;                   \
+        p.ptr = (p.node) ? p.node->begin : 0;   \
+      }                                         \
+      p; })
+
+#define BUFPOS_END(buf, src)    ({ bufpos p;    \
+      if (src)                                  \
+        p = *(src);                             \
+      else {                                    \
+        p.node = (buf)->tail;                   \
+        p.ptr = (p.node) ? p.node->end : 0;     \
+      }                                         \
+      p; })
+
+
+
+
 void buffer_init(struct buffer *b, size_t sizehint);
 void buffer_clear(struct buffer *b);
+
 
 /*
  * Append data from FD with SIZE byte(s) in the buffer, B.
@@ -142,9 +164,25 @@ int buffer_printf(struct buffer *b, const char *format, ...)
  * It returns the number of byte(s) copied. */
 size_t buffer_copy(struct xobs *obs, struct buffer *b, const bufpos *pos);
 
+int buffer_load(struct buffer *b, const void *data, size_t size);
+
+/*
+ * Copy buffer contents in range between FROM and TO to the OBS.
+ *
+ * If FROM is NULL, the beginning of the buffer is used.  If TO is
+ * NULL, the end of the buffer is used.
+ *
+ * This function returns the number of byte(s) it copied.  Note that
+ * the copied contents are stored in OBS as a growing object.
+ */
+size_t buffer_copy_range(struct xobs *obs, struct buffer *b,
+                         const bufpos *from, const bufpos *to);
+
 #define buffer_isempty(b)       ((b)->head == 0 || \
                                  ((b)->head == (b)->tail && \
                                   (b)->tail->begin >= (b)->tail->end))
+
+#define bufpos_isempty(p)       ((p)->node == 0)
 
 /* Return the number of availabe byte(s) that a buffer can hold without
  * allocating additional bufnode. */
@@ -233,6 +271,12 @@ buffer_size(struct buffer *b, const bufpos *pos)
   return total;
 }
 
+/*
+ * Return the total number of bytes in the buffer, B.
+ *
+ * This runs at O(1), and is faster than using buffer_size(),
+ */
+#define BUFFER_SIZE(b)  ((b)->nbytes)
 
 static __inline__ size_t
 buffer_node_count(struct buffer *b, bufpos *from)
@@ -262,6 +306,8 @@ buffer_node_count(struct buffer *b, bufpos *from)
   return ncount;
 }
 
+#include <stdio.h>
+void buffer_dump(FILE *fp, struct buffer *b);
 
 #if 0
 /* TODO */
