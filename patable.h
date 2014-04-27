@@ -44,6 +44,45 @@ int patable_match(struct patable *table, const char *source, size_t len,
  */
 char **patable_groups(struct xobs *pool, size_t ngroup,
                       const char *source, const int *ovector);
+
+/*
+ * Convenient function to match the regular expression RE with EXTRA
+ * in SOURCE with the length, LEN.  If LEN is (size_t)-1, it will be
+ * calculated via strlen().   OVECTOR is used for captured subgroups.
+ * and OVSIZE is the number of vectors in OVECTOR.    OVECTOR should be
+ * larger than (1 + # of subgroups) * 3.  See pcreapi(3) for details.
+ */
+static __inline__ int
+re_match(pcre *re, pcre_extra *extra, const char *source, size_t len,
+         int *ovector, size_t ovsize)
+{
+  if (len == (size_t)-1)
+    len = strlen(source);
+
+  return pcre_exec(re, extra,
+                   source, len,
+                   0, /* start offset */
+                   0, /* options */
+                   ovector, ovsize);
+}
+
+
+/*
+ * Convenient function to retrive the subgroups from the OVECTOR set
+ * by re_match().  NGROUP is the number of subgroups + 1, which is the
+ * return value of re_match().  re_groups() will returns an array of
+ * pointers to subgroups.  The array and strings of subgroups are
+ * allocated from POOL.  You'll need to pass the same source text,
+ * SOURCE used in re_match().  To free all resources in re_groups(),
+ * call xobs_free() on the returned pointer.  Note that re_groups()
+ * will return NULL on errors, so make sure you call xobs_free() iff
+ * when re_groups() succeeded.
+ */
+char **re_groups(struct xobs *pool, size_t ngroup,
+                 const char *source, const int *ovector)
+  __attribute__ ((alias("patable_groups")));
+
+
 #else  /* USE_PCRE */
 int patable_match(struct patable *table, const char *source, size_t len,
                   int *ngroup, regmatch_t *ovector, size_t ovsize);

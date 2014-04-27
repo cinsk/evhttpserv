@@ -70,7 +70,8 @@ patable_add(struct patable *table, const char *pattern,
   int ecode, eoff;
   const char *emsg;
 
-  int options = PCRE_ANCHORED | PCRE_DOLLAR_ENDONLY;
+  // int options = PCRE_ANCHORED | PCRE_DOLLAR_ENDONLY;
+  int options = PCRE_ANCHORED;
 
   if (table->cur >= table->npat) {
     /* TODO: check if there's a bug here */
@@ -128,12 +129,8 @@ patable_match(struct patable *table, const char *source, size_t len,
 
   for (i = 0; i < table->cur; i++) {
     assert(table->pat[i].re != 0);
-    ng = pcre_exec(table->pat[i].re, table->pat[i].ext,
-                   source, len,
-                   0, /* start offset */
-                   0, /* options */
-                   ovector, ovsize);
-
+    ng = re_match(table->pat[i].re, table->pat[i].ext, source, len,
+                  ovector, ovsize);
     if (ng > 0) {
       *ngroup = ng;
       return i;
@@ -149,6 +146,9 @@ patable_groups(struct xobs *pool, size_t ngroup,
 {
   char **grpv;
   int i;
+
+  if (ngroup == 0)
+    return 0;
 
   grpv = xobs_alloc(pool, sizeof(*grpv) * ngroup);
   if (!grpv)
@@ -368,6 +368,9 @@ patable_release(struct patable *pat)
 #include <string.h>
 #include <limits.h>
 #include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 void
 my_callback(int argc, char *argv[])
@@ -424,75 +427,88 @@ main(int argc, char *argv[])
   xobs_init(pool);
 
   patable_init(&tbl);
-  patable_add(&tbl, "/config", 0);
-  patable_add(&tbl, "/person/(.*)", 0);
-  patable_add(&tbl, "/alldocs/(.*)", 0);
-  patable_add(&tbl, "/config2", 0);
-  patable_add(&tbl, "/config3", 0);
-  patable_add(&tbl, "/config4", 0);
-  patable_add(&tbl, "/config5", 0);
-  patable_add(&tbl, "/db/([^/]+)/([^/]+)/?", 0);
 
-  sum.tv_sec = sum.tv_nsec = 0;
-
-  for (i = 0; i < 1000000; i++) {
-    int ngroup;
-#ifdef USE_PCRE
-    int ovector[80];
-#else
-    regmatch_t ovector[40];
+  if (argc == 1) {
+#if 0
+    patable_add(&tbl, "/config", 0);
+    patable_add(&tbl, "/person/(.*)", 0);
+    patable_add(&tbl, "/alldocs/(.*)", 0);
+    patable_add(&tbl, "/config2", 0);
+    patable_add(&tbl, "/config3", 0);
+    patable_add(&tbl, "/config4", 0);
+    patable_add(&tbl, "/config5", 0);
 #endif
+
+    patable_add(&tbl, "/db/([^/]+)/([^/]+)/?", 0);
+
+    sum.tv_sec = sum.tv_nsec = 0;
+
+    for (i = 0; i < 1000000; i++) {
+      int ngroup;
+#ifdef USE_PCRE
+      int ovector[80];
+#else
+      regmatch_t ovector[40];
+#endif
+      char **grpv;
+      int idx;
+
+      snprintf(buf, LINE_MAX - 1, "/db/%ld/%ld/", random(), random());
+      printf("source: |%s|\n", buf);
+
+      clock_gettime(CLOCK_MONOTONIC, &ts1);
+      idx = patable_match(&tbl, buf, (size_t)-1,
+                          &ngroup,
+                          ovector, sizeof(ovector) / sizeof(ovector[0]));
+      if (idx != -1) {
+        grpv = patable_groups(pool, ngroup, buf, ovector);
+        //my_callback(ngroup, grpv);
+        patable_free_groups(pool, grpv);
+      }
+      clock_gettime(CLOCK_MONOTONIC, &ts2);
+      timespec_diff(&sum, &ts1, &ts2);
+    }
+    fprintf(stderr, "time: %ld.%09ld\n", sum.tv_sec, sum.tv_nsec);
+  }
+  else if (argc == 3) {
+    int fd;
+    char buf[4096];
+    int readch;
+    int ngroup;
+    int ovector[80];
     char **grpv;
     int idx;
 
-    snprintf(buf, LINE_MAX - 1, "/db/%ld/%ld/", random(), random());
-    printf("source: |%s|\n", buf);
+    patable_add(&tbl, argv[1], 0);
 
-    clock_gettime(CLOCK_MONOTONIC, &ts1);
-    idx = patable_match(&tbl, buf, (size_t)-1,
+    fd = open(argv[2], O_RDONLY);
+    if (fd == -1)
+      xerror(1, errno, "can't open %s", argv[2]);
+
+    readch = read(fd, buf, sizeof(buf));
+    if (readch == -1)
+      xerror(1, errno, "read failed");
+    close(fd);
+
+    idx = patable_match(&tbl, buf, readch,
                         &ngroup,
                         ovector, sizeof(ovector) / sizeof(ovector[0]));
+    printf("match(%d), ngroup(%d)\n", idx, ngroup);
+
     if (idx != -1) {
       grpv = patable_groups(pool, ngroup, buf, ovector);
-      //my_callback(ngroup, grpv);
+      for (i = 0; i < ngroup; i++) {
+        printf("group[%d] = |%s|\n", i, grpv[i]);
+      }
       patable_free_groups(pool, grpv);
     }
-    clock_gettime(CLOCK_MONOTONIC, &ts2);
-    timespec_diff(&sum, &ts1, &ts2);
+    else
+      printf("no match\n");
   }
 
-#if 0
-  {
-    size_t len = -1;
-    struct pentry *ent;
-    int argc;
-    char **argv;
-
-#define PATABLE_EXEC(table, pat, len, ent, argc, argv)  \
-    for (len = (len == (size_t)-1) ? strlen(pat) : len, \
-           ent = (table)->pat; ent != (table)->pat[(table)->cur]; ent++)
-
-    PATABLE_EXEC(&tbl, argv[1], len, ent, argc, argv) {
-
-    }
-#if 0
-    for (len = (len == (size_t)-1) ? strlen(argv[1]) : len,
-           ent = table->pat; ent != table->pat[table->cur]; ent++) {
-
-    }
-#endif
-  }
-
-  if (patable_exec(&tbl, argv[1], -1, pool) == 0) {
-    printf("no match for %s\n", argv[1]);
-  }
-
-
-#endif
   patable_release(&tbl);
   xobs_free(pool, 0);
 
-  fprintf(stderr, "time: %ld.%09ld\n", sum.tv_sec, sum.tv_nsec);
   return 0;
 }
 
