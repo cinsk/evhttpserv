@@ -70,6 +70,11 @@ struct ev_httpconn {
   char *uri;
   char *version;
 
+  struct {
+    char *boundary;    /* multipart/form-data boundary,
+                        * allocated in HDR_POOL */
+  } form;
+
   char req_te[HTTP_TE_MAX];
 
   /* When STATE is HC_RECV_BODY,

@@ -261,7 +261,8 @@ ev_httpconn_toggle_readwrite(struct ev_loop *loop, ev_httpconn *hc)
       }
       else {
         assert(xobs_object_size(&hc->hdr_pool) == 0);
-        hdrstore_fill(&hc->rsp_hdrs, &hc->hdr_pool, hc->version, hc->rsp_code);
+        hdrstore_fill(&hc->rsp_hdrs, &hc->hdr_pool,
+                      hc->version, hc->rsp_code, 0);
 
         hc->body_size = hc->body_rest = xobs_object_size(&hc->hdr_pool);
         hc->rsp_line_hdrs = xobs_finish(&hc->hdr_pool);
@@ -442,7 +443,7 @@ set_reqbody_params(ev_httpconn *hc)
   ssize_t sz;
 
   if (get_te(hc, -1) != HTTP_TE_CHUNKED) {
-    val = hdrstore_get(&hc->req_hdrs, "Content-Length");
+    val = hdrstore_get(&hc->req_hdrs, "CONTENT-LENGTH", 0);
     if (!val) {
       set_response(hc, HTTP_LENGTH_REQUIRED, 1);
       goto err;
@@ -531,6 +532,14 @@ load_req_line_headers(ev_httpconn *hc, char *req)
     value++;
     value += strspn(value, " \t");
 
+    /* TODO:
+     *
+     * I misunderstood how multiple TE can be appeared in a req.  I
+     * thought there can be multiple TE headers, but it turns out that
+     * there is only one TE header, but contains multiple TE values:
+     *
+     * Transfer-Encoding: trailers, deflate
+     */
     if (strcmp(name, "Transfer-Encoding") == 0) {
       teval = str2te(value);
       if (teval == HTTP_TE_UNKNOWN) {
@@ -547,7 +556,7 @@ load_req_line_headers(ev_httpconn *hc, char *req)
       }
     }
     else
-      hdrstore_set(&hc->req_hdrs, name, value);
+      hdrstore_set(&hc->req_hdrs, name, value, 0);
   }
 
   if (hc->req_te[0] == HTTP_TE_NONE)
@@ -556,7 +565,7 @@ load_req_line_headers(ev_httpconn *hc, char *req)
   {
     const char *val;
 
-    val = hdrstore_get(&hc->req_hdrs, "Connection");
+    val = hdrstore_get(&hc->req_hdrs, "CONNECTION", 0);
     if (val) {
       if (strcmp(val, "close") == 0)
         hc->rsp_disconnect = 1;
@@ -581,7 +590,7 @@ set_content_length(ev_httpconn *hc)
   assert(hc->eob == 1);
   assert(xobs_object_size(&hc->hdr_pool) == 0);
   xobs_sprintf(&hc->hdr_pool, "%zu", buffer_size(&hc->obuf, NULL));
-  hdrstore_set(&hc->rsp_hdrs, "Content-Length", xobs_finish(&hc->hdr_pool));
+  hdrstore_set(&hc->rsp_hdrs, "Content-Length", xobs_finish(&hc->hdr_pool), 0);
 }
 
 
@@ -605,6 +614,17 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
   case HM_POST:
 #ifdef EVHTTP_HANDLE_FORM
     /* TODO:  */
+    if (!hc->form.boundary) {
+      hc->form.boundary = form_parse_boundary(hc);
+      if (!hc->form.boundary) {
+        if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0)
+          hc->eob = 1;
+          // if (!hc->body_chnk && calc_len) set_content_length(hc);
+      }
+      break;
+    }
+
+
 
     if (eob) {
       if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0) {
@@ -644,7 +664,7 @@ prepare_send_rsp(struct ev_loop *loop, ev_httpconn *hc)
   }
   else {
     assert(xobs_object_size(&hc->hdr_pool) == 0);
-    hdrstore_fill(&hc->rsp_hdrs, &hc->hdr_pool, hc->version, hc->rsp_code);
+    hdrstore_fill(&hc->rsp_hdrs, &hc->hdr_pool, hc->version, hc->rsp_code, 0);
 
     hc->body_size = hc->body_rest = xobs_object_size(&hc->hdr_pool);
     hc->rsp_line_hdrs = xobs_finish(&hc->hdr_pool);
@@ -665,7 +685,7 @@ prepare_recv_body(struct ev_loop *loop, ev_httpconn *hc)
 {
   static char rsp_continue[] = "HTTP/1.1 100 Continue\r\n\r\n";
   ssize_t written;
-  char *exp = hdrstore_get(&hc->req_hdrs, "Expect");
+  const char *exp = hdrstore_get(&hc->req_hdrs, "EXPECT", 0);
 
   hc->state = HC_RECV_BODY;
 
@@ -1013,7 +1033,7 @@ ev_httpconn_read_cb(struct ev_loop *loop, ev_io *w, int revents)
 
         }
      */
-    val = hdrstore_get(&hc->req_hdrs, "Content-Length");
+    val = hdrstore_get(&hc->req_hdrs, "CONTENT-LENGTH");
     if (val)
       hc->body_size = atoi(val);
 
