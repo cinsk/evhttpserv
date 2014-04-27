@@ -80,10 +80,11 @@ req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
       buffer_printf(&w->obuf, "<html><body>hello</body></html>\n");
       // sprintf(v, "%u", xobs_object_size(&w->rsp_pool));
       // hdrstore_set(&w->rsp_hdrs, "Content-Length", v);
-      hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive");
+      hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive", 0);
 
       xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
-      hdrstore_set(&w->rsp_hdrs, "Content-Length", xobs_finish(&w->hdr_pool));
+      hdrstore_set(&w->rsp_hdrs, "Content-Length",
+                   xobs_finish(&w->hdr_pool), 0);
     }
     else {
       w->rsp_code = HTTP_NOT_IMPLEMENTED;

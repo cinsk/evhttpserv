@@ -122,7 +122,7 @@ ev_http_producer_cb(struct ev_loop *loop, ev_io *w, int revents)
   while (1) {
     fd = accept(w->fd, (struct sockaddr *)&cliaddr, &size);
     if (fd == -1) {
-      int e = errno;
+      // int e = errno;
       if (errno == EWOULDBLOCK || errno == EINTR)
         return;
       xerror(0, errno, "can't accept more connection");
