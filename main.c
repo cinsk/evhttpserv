@@ -6,6 +6,7 @@
 #include "evhttp.h"
 #include "xobstack.h"
 #include "xerror.h"
+#include "buffer.h"
 
 int debug_mode = 1;
 
@@ -79,12 +80,21 @@ req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
       xdebug(0, "Request(%s, %s): %s", w->method_string, w->version, w->uri);
       buffer_printf(&w->obuf, "<html><body>hello</body></html>\n");
       // sprintf(v, "%u", xobs_object_size(&w->rsp_pool));
-      // hdrstore_set(&w->rsp_hdrs, "Content-Length", v);
+      // hdrstore_set(&w->rsp_hdrs, "Content-Length", v, 0);
       hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive", 0);
 
       xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
       hdrstore_set(&w->rsp_hdrs, "Content-Length",
                    xobs_finish(&w->hdr_pool), 0);
+    }
+    else if (w->method == HM_POST) {
+      if (w->form)
+        form_dump(stderr, w->form);
+
+      xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
+      hdrstore_set(&w->rsp_hdrs, "Content-Length",
+                   xobs_finish(&w->hdr_pool), 0);
+      w->rsp_code = HTTP_OK;
     }
     else {
       w->rsp_code = HTTP_NOT_IMPLEMENTED;

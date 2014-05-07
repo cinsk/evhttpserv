@@ -125,7 +125,8 @@ get_te(ev_httpconn *hc, int index)
 
 
 int
-ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd, size_t *refcount)
+ev_httpconn_init(ev_httpconn *hc, struct ev_http *http,
+                 int fd, size_t *refcount)
 {
   ev_io_init(&hc->io, ev_httpconn_io_cb, fd, EV_READ);
 
@@ -167,6 +168,8 @@ ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd, size_t *refcount
 
   hc->refcnt = refcount;
 
+  hc->form = 0;
+
   return 1;
 }
 
@@ -188,6 +191,12 @@ ev_httpconn_stop(struct ev_loop *loop, ev_httpconn *hc)
          ev_pending_count(loop));
   if (close(hc->io.fd) == -1)
     xdebug(errno, "close(2) failed on httpconn(%d)", hc->io.fd);
+
+  if (hc->form) {
+    form_free(hc->form);
+    hc->form = 0;
+  }
+
   ev_io_stop(loop, &hc->io);
   ev_timer_stop(loop, &hc->timer);
 
@@ -220,6 +229,12 @@ ev_httpconn_reset(struct ev_httpconn *hc, int clear_ibuf)
   hc->hdr_pool_reset = xobs_alloc(&hc->hdr_pool, 1);
   hdrstore_free(&hc->req_hdrs, 1);
   hdrstore_free(&hc->rsp_hdrs, 1);
+
+  if (hc->form) {
+    form_free(hc->form);
+    hc->form = 0;
+  }
+
   hc->method = HM_NONE;
   hc->method_string = hc->uri = hc->version = 0;
 
@@ -612,27 +627,20 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
     break;
 
   case HM_POST:
-#ifdef EVHTTP_HANDLE_FORM
-    /* TODO:  */
-    if (!hc->form.boundary) {
-      hc->form.boundary = form_parse_boundary(hc);
-      if (!hc->form.boundary) {
-        if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0)
-          hc->eob = 1;
-          // if (!hc->body_chnk && calc_len) set_content_length(hc);
+    if (hc->form) {
+      if (form_parse(hc->form, &hc->ibuf, eob)) {
+        /* If we've parsed the form for the callback, the callback MUST
+         * return zero (job finished).  The callback should not return
+         * nonzero value */
+        hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM);
+        hc->eob = 1;
       }
-      break;
     }
-
-
-
-    if (eob) {
+    else {
       if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0) {
         hc->eob = 1;
-        // if (!hc->body_chnk && calc_len) set_content_length(hc);
       }
     }
-#endif  /* EVHTTP_HANDLE_FORM */
     break;
 
   case HM_PUT:
@@ -648,6 +656,7 @@ static __inline__ void
 prepare_recv_req(struct ev_loop *loop, struct ev_httpconn *hc)
 {
   hc->state = HC_RECV_REQ;
+
   ev_httpconn_reset(hc, 0);
 }
 
@@ -700,6 +709,24 @@ prepare_recv_body(struct ev_loop *loop, ev_httpconn *hc)
       return 0;
     }
   }
+
+#ifdef EVHTTP_HANDLE_FORM
+  if (hc->method == HM_POST || hc->method == HM_PUT) {
+    if (hc->form)
+      form_free(hc->form);
+    else
+      hc->form = &hc->form_;
+    form_init(hc->form);
+
+    if (form_set_parser(hc->form, &hc->req_hdrs) == 0) {
+      /* If we can't prepare right form parser, keep going without
+       * form handling routines */
+      form_free(hc->form);
+      hc->form = 0;
+    }
+  }
+#endif
+
   return 1;
 }
 

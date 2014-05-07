@@ -6,6 +6,7 @@
 #include "xobstack.h"
 #include "hdrstore.h"
 #include "buffer.h"
+#include "form.h"
 
 enum HTTP_METHOD {
   HM_NONE,
@@ -70,10 +71,10 @@ struct ev_httpconn {
   char *uri;
   char *version;
 
-  struct {
-    char *boundary;    /* multipart/form-data boundary,
-                        * allocated in HDR_POOL */
-  } form;
+#ifdef EVHTTP_HANDLE_FORM
+  struct form *form;
+  struct form form_;
+#endif
 
   char req_te[HTTP_TE_MAX];
 

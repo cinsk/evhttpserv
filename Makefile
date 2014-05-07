@@ -4,11 +4,11 @@
 #CFLAGS=-Wall -g3 $(KCDB_CFLAGS)
 #LIBS=-lsqlite3 -lev $(KCDB_LIBS)
 
-CFLAGS=-Wall -g3
+CFLAGS=-Wall -g3 -DEVHTTP_HANDLE_FORM
 #CFLAGS=-Wall -O2 -fomit-frame-pointer -DNDEBUG
-LIBS=-lev -lpthread
+LIBS=-lpcre -lev -lpthread
 
-OBJS=evhttp.o evhttpconn.o xerror.o xobstack.o hdrstore.o buffer.o hexdump.o
+OBJS=evhttp.o evhttpconn.o xerror.o xobstack.o hdrstore.o buffer.o hexdump.o form.o
 
 TOPDIR := $(shell pwd)
 LIBOBJS := $(OBJS)
@@ -17,7 +17,7 @@ export TOPDIR LIBOBJS LIBS CFLAGS
 
 .PHONY: all clean rebuild test
 
-all: evhttp
+all: evhttp test
 rebuild: clean all
 
 $(OBJS): %.o: %.c %.h
