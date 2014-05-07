@@ -715,6 +715,7 @@ buffer_truncate(struct buffer *b, bufpos *from)
   }
 
   pos.node->next = 0;
+  b->nbytes -= ncount;
   return ncount;
 }
 
