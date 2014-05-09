@@ -21,18 +21,19 @@
 
 #define MULTIPART_FORMDATA      "multipart/form-data"
 
-#define MPS_RECV_HDRS   1
-#define MPS_RECV_BODY   2
+#define MPS_RECV_BNDY   1
+#define MPS_RECV_HDRS   2
+#define MPS_RECV_BODY   3
 
 struct mpparser {
   const char *boundary;
   size_t boundary_size;
-  size_t len;                   /* Content-Length */
+  ssize_t remains;               /* initial: Content-Length */
 
   int state;
 
-  struct form_entry *current;
-  struct form_entry *entries;
+  struct forment *current;
+  struct forment *entries;
 };
 
 
@@ -54,6 +55,12 @@ struct fparser fue_parser = { ue_open, ue_close, ue_parse };
 static __inline__ struct forment *form_get(struct form *f,
                                            const char *key);
 static int form_set_string(struct form *f, const char *key, const char *value);
+
+static __inline__ struct forment *form_entry_new(struct xobs *pool);
+static __inline__ struct forment *form_entry_file_init(struct xobs *pool,
+                                                       struct forment *ent);
+
+const char *tmpfile_template __attribute__((weak)) = "/tmp/evhttp-XXXXXX";
 
 int
 form_init(struct form *f)
@@ -121,6 +128,46 @@ form_free(struct form *f)
 static int
 mp_open(struct form *f, struct hdrstore *req)
 {
+  struct mpparser *mpdata;
+  struct header *ct;
+  const char *b;
+  const char *lp;
+  int len;
+
+  mpdata = xobs_alloc(&f->pool, sizeof(*mpdata));
+  if (!mpdata)
+    return -1;
+
+  ct = hdrstore_get_header(req, "CONTENT-TYPE", 0);
+  if (!ct)
+    goto err;
+  b = hdrstore_get(req, "BOUNDARY", ct);
+  if (!b)
+    goto err;
+  lp = hdrstore_get(req, "CONTENT-LENGTH", 0);
+  if (!lp)
+    goto err;
+
+  xobs_grow(&f->pool, "--", 2);
+  xobs_grow0(&f->pool, b, strlen(b));
+
+  mpdata->boundary_size = xobs_object_size(&f->pool) - 1; /* -1 for '\0' */
+  mpdata->boundary = xobs_finish(&f->pool);
+  len = atoi(lp);
+  if (len < 0) {
+    /* TODO: check mpdata->len so that it has meaningful length */
+    goto err;
+  }
+  mpdata->remains = len;
+  mpdata->state = MPS_RECV_BNDY;
+  mpdata->current = 0;
+  mpdata->entries = 0;
+
+  f->padata = mpdata;
+  return 0;
+
+ err:
+  xobs_free(&f->pool, mpdata);
   return -1;
 }
 
@@ -130,10 +177,150 @@ mp_close(struct form *f)
   return -1;
 }
 
+/*
+ * 1: parsing completed
+ * 0: parsing is on-going, need more input.
+ * -1: parse error.  TODO: what now?
+ */
 static int
 mp_parse(struct form *f, struct buffer *b, int eos)
 {
-  return -1;
+  struct mpparser *mp = (struct mpparser *)f->padata;
+  bufpos found;
+
+  switch (mp->state) {
+  case MPS_RECV_BNDY:
+  recv_bndy:
+    xdebug(0, "MPS_RECV_BNDY: remains(%zd)", mp->remains);
+
+    if (buffer_find(b, mp->boundary, mp->boundary_size, &found, 0)) {
+      mp->remains -= buffer_advance(b, found.node, found.ptr,
+                                    mp->boundary_size + CRLFLEN);
+      mp->state = MPS_RECV_HDRS;
+      mp->current = 0;
+      goto recv_hdrs;
+    }
+    break;
+
+  case MPS_RECV_HDRS:
+  recv_hdrs:
+    xdebug(0, "MPS_RECV_HDRS: remains(%zd)", mp->remains);
+
+    if (mp->remains <= 2) {
+      if (buffer_find(b, CRLF, CRLFLEN, &found, 0)) {
+        buffer_advance(b, found.node, found.ptr, 0);
+        return 1;
+      }
+      else
+        return 0;
+    }
+
+    if (!buffer_find(b, CRLF2, CRLF2LEN, &found, 0)) {
+      /* We haven't received the complete headers for the current part */
+      break;
+    }
+    // buffer_advance(b, found.node, found.ptr, CRLF2LEN);
+    mp->current = form_entry_new(&f->pool);
+    buffer_copy(&f->pool, b, &found);
+    {
+      char *hdrs;
+      struct header *cdisp = 0, *ctype = 0;
+      const char *name = 0;
+
+      xobs_1grow(&f->pool, '\0');
+      hdrs = xobs_finish(&f->pool);
+      hdrstore_load(&mp->current->hdrs, hdrs, 0);
+
+      cdisp = hdrstore_get_header(&mp->current->hdrs, "CONTENT-DISPOSITION", 0);
+      if (cdisp) {
+        name = hdrstore_get(&mp->current->hdrs, "NAME", cdisp);
+        if (name)
+          mp->current->k = name;
+      }
+      /* TODO: what happen either CDISP or NAME is NULL? */
+
+      ctype = hdrstore_get_header(&mp->current->hdrs, "CONTENT-TYPE", 0);
+      if (ctype) {              /* assuming that this part is large */
+        form_entry_file_init(&f->pool, mp->current);
+      }
+      else
+        mp->current->type = FORM_STRING;
+
+      mp->remains -= buffer_advance(b, found.node, found.ptr, CRLF2LEN);
+      mp->state = MPS_RECV_BODY;
+      goto recv_body;
+    }
+
+  case MPS_RECV_BODY:
+  recv_body:
+    /* TODO: parse the body */
+    xdebug(0, "MPS_RECV_BODY: remains(%zd)", mp->remains);
+
+    if (buffer_find(b, mp->boundary, mp->boundary_size, &found, 0)) {
+      /* TODO: handle the last CRLF.
+       *
+       * The last 2 bytes before FOUND is CRLF.  I need to remove that
+       * before writing to file or string. */
+
+      if (mp->current->type == FORM_FILE) {
+        size_t written;
+        written = buffer_flush(b, found.node, found.ptr,
+                               mp->current->v.file.fd);
+        if (written == -1) {
+          /* TODO: release mp->current???? */
+          xdebug(errno, "buffer_flush failed");
+          return -1;
+        }
+        mp->remains -= written;
+        lseek(mp->current->v.file.fd, -CRLFLEN, SEEK_CUR);
+        buffer_seek(b, mp->boundary_size, SEEK_SET, &found);
+        mp->remains -= buffer_advance(b, found.node, found.ptr, CRLFLEN);
+      }
+      else if (mp->current->type == FORM_STRING) {
+        size_t sz;
+        buffer_copy(&f->pool, b, &found);
+        sz = xobs_object_size(&f->pool);
+        mp->current->v.str = xobs_finish(&f->pool);
+        ((char *)(mp->current->v.str))[sz - CRLFLEN] = '\0';
+        mp->remains -= buffer_advance(b, found.node, found.ptr,
+                                      mp->boundary_size + CRLFLEN);
+      }
+    }
+    else {
+      if (mp->current->type == FORM_FILE) {
+        size_t written;
+        size_t sz = BUFFER_SIZE(b);
+        if (sz > mp->boundary_size) {
+          buffer_seek(b, sz - mp->boundary_size, SEEK_SET, &found);
+          written = buffer_flush(b, found.node, found.ptr,
+                                 mp->current->v.file.fd);
+          if (written == -1) {
+            xdebug(errno, "buffer_flush failed");
+            return -1;
+          }
+          mp->remains -= written;
+        }
+        return 0;                /* waiting for more input */
+      }
+    }
+
+    /* Current part is finished */
+    if (mp->current->type == FORM_FILE)
+      close(mp->current->v.file.fd);
+
+    xdebug(0, "add name(%s) to the form", mp->current->k);
+    HASH_ADD_KEYPTR(hh, f->root,
+                    mp->current->k, strlen(mp->current->k),
+                    mp->current);
+
+    mp->current = 0;
+    goto recv_bndy;
+
+  default:
+    /* TODO */
+    abort();
+  }
+  return 0;
 }
 
 static int
@@ -165,14 +352,14 @@ url_decode(char *s)
           if (*(r + 1) >= '0' && *(r + 1) <= '9')
             escvalue = *(r + 1) - '0';
           else
-            escvalue = toupper(*(r + 1)) - 'A';
+            escvalue = toupper(*(r + 1)) - 'A' + 10;
 
           escvalue <<= 4;
 
           if (*(r + 2) >= '0' && *(r + 2) <= '9')
             escvalue += *(r + 2) - '0';
           else
-            escvalue = toupper(*(r + 2)) - 'A';
+            escvalue += toupper(*(r + 2)) - 'A' + 10;
 
           *w++ = escvalue;
           r += 3;
@@ -305,6 +492,54 @@ form_dump(FILE *fp, struct form *f)
 }
 
 
+static __inline__ struct forment *
+form_entry_new(struct xobs *pool)
+{
+  struct forment *p;
+  p = xobs_alloc(pool, sizeof(*p));
+  hdrstore_init(&p->hdrs, pool);
+
+  p->k = 0;
+  p->type = FORM_NIL;
+
+  return p;
+}
+
+
+static __inline__ struct forment *
+form_entry_file_init(struct xobs *pool, struct forment *ent)
+{
+  int fd;
+  char tmpfile[TMPFILE_MAX];
+
+  strncpy(tmpfile, tmpfile_template, TMPFILE_MAX - 1);
+  tmpfile[TMPFILE_MAX - 1] = '\0';
+
+#ifdef _GNU_SOURCE
+  fd = mkostemp(tmpfile, O_APPEND);
+#else
+  fd = mkstemp(tmpfile);
+  {
+    int flags = fcntl(fd, F_GETFL);
+    if (flags == -1)
+      xdebug(errno, "fcntl(fd, F_GETFL) failed on tmpfile");
+    else
+      if (fcntl(fd, F_SETFL, flags | O_APPEND) == -1)
+        xdebug(errno, "fcntl(fd, F_SETFL) failed for setting O_APPEND");
+    /* TODO: what's next step if fcntl() failed? */
+  }
+#endif
+  if (fd == -1) {
+    xerror(0, errno, "cannot create a temporary file");
+    return NULL;
+  }
+  ent->type = FORM_FILE;
+  ent->v.file.fd = fd;
+  ent->v.file.path = xobs_copy0(pool, tmpfile, strlen(tmpfile));
+
+  return ent;
+}
+
 #if 0
 struct form_entry {
   char *k;
@@ -325,8 +560,6 @@ struct form_entry {
   UT_hash_handle hh;
 };
 
-
-const char *tmpfile_template __attribute__((weak)) = "/tmp/evhttp-XXXXXX";
 
 static __inline__ int tmpfile(char tmpfile[TMPFILE_MAX]);
 
@@ -575,19 +808,6 @@ form_value_file(struct form_entry *ent)
 {
   assert(ent->type == FORM_FILE);
   return ent->v.file.path;
-}
-
-
-static __inline__ struct form_entry *
-form_entry_new(struct xobs *pool)
-{
-  struct form_entry *p;
-  p = xobs_alloc(pool, sizeof(*p));
-  hdrstore_init(&p->hdrs, pool);
-
-  p->k = 0;
-  p->type = FORM_NIL;
-  return p;
 }
 
 
@@ -900,9 +1120,9 @@ main(int argc, char *argv[])
     readch = buffer_fill_fd(&b, 0, -1, &eof);
     if (buffer_find(&b, CRLF2, CRLF2LEN, &found, NULL)) {
       buffer_copy(&pool, &b, &found);
-      reqsz = xobs_object_size(&pool);
+      xobs_1grow(&pool, '\0');
       req = xobs_finish(&pool);
-      hdrstore_load(&store, req, reqsz, 0);
+      hdrstore_load(&store, req, 0);
       buffer_advance(&b, found.node, found.ptr, CRLF2LEN);
       hdrstore_dump(&store, stderr);
       break;

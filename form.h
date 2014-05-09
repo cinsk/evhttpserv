@@ -56,7 +56,7 @@ struct form {
 
 int form_init(struct form *f);
 
-/* return 1 on success, 0 on failure */
+/* return 0 on success, -1 on failure */
 int form_set_parser(struct form *f, struct hdrstore *req);
 
 int form_parse(struct form *f, struct buffer *b, int eos);
