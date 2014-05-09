@@ -440,6 +440,7 @@ hh_token_params(struct hdrstore *store, const char *key,
 
       /* Now, NAME holds the name, and VAL holds the value. */
       hdrstore_set(store, name, val, param);
+      xdebug(0, "key[%s]: name(%s) val(%s)", key, name, val);
 
       if (*value == '\0')
         break;
@@ -454,16 +455,17 @@ hh_token_params(struct hdrstore *store, const char *key,
 }
 
 
-char *
-hdrstore_load(struct hdrstore *store, char *buf, size_t size, void *data)
+int
+hdrstore_load(struct hdrstore *store, char *buf, void *data)
 {
   char *line, *saveptr;
   char *name, *value;
+  int count = 0;
 
   if (!buf)
     return 0;
 
-  buf[size - 1] = '\0';
+  // buf[size - 1] = '\0';
 
   line = strtok_r(buf, "\r\n", &saveptr);
 
@@ -502,10 +504,11 @@ hdrstore_load(struct hdrstore *store, char *buf, size_t size, void *data)
       }
       else
         hdrstore_set(store, name, value, 0);
+      count++;
     }
   } while ((line = strtok_r(NULL, "\r\n", &saveptr)) != 0);
 
-  return buf + size;
+  return count;
 }
 
 
@@ -547,7 +550,7 @@ Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryr2nav90pCAt7fp
   xobs_init(&pool);
   hdrstore_init(&hstore, &pool);
 
-  hdrstore_load(&hstore, source, sizeof(source), 0);
+  hdrstore_load(&hstore, source, 0);
 #if 0
   hdrstore_set(&hstore, "Host", "www.cinsk.org", 0);
   hdrstore_set(&hstore, "Accept", "*/*", 0);

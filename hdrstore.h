@@ -150,7 +150,7 @@ int hdrstore_fill(struct hdrstore *store, struct xobs *opool,
                   const char *version, int status_code,
                   int (*param_handler)(struct xobs *pool, struct header *p));
 
-char *hdrstore_load(struct hdrstore *store, char *buf, size_t size, void *data);
+int hdrstore_load(struct hdrstore *store, char *buf, void *data);
 
 
 /* Used for debugging, hdrstore_dump() dumps the contents of the STORE
