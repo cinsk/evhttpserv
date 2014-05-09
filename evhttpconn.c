@@ -513,6 +513,7 @@ str2te(const char *s)
  * If loading failed (mostly due to malformed request), this function
  * sets hc->rsp_code and possibly hc->rsp_disconnect, then returns 0.
  * Otherwise (on success), it returns nonzero.  */
+#if 0
 static int
 load_req_line_headers(ev_httpconn *hc, char *req)
 {
@@ -597,7 +598,94 @@ load_req_line_headers(ev_httpconn *hc, char *req)
   set_response(hc, HTTP_BAD_REQUEST, 1);
   return 0;
 }
+#else
+static int
+load_req_line_headers(ev_httpconn *hc, char *req)
+{
+  int tenum;
+  char *line;
+  const char *teval;
+  char *te = hc->req_te;
+  char *te_copied, *tok;
+  char *hdrs;
+  char *saveptr;
 
+  if (!req)
+    return 0;
+
+  line = req;
+  hdrs = strstr(req, "\r\n");
+  if (!hdrs)
+    goto reqline_err;
+  *hdrs = '\0';
+  hdrs += CRLFLEN;
+
+  hc->method_string = strtok_r(line, " \t", &saveptr);
+  if (!hc->method_string)
+    goto reqline_err;
+  hc->method = str2method(hc->method_string);
+  if (hc->method == HM_NONE)
+    goto reqline_err;
+  hc->uri = strtok_r(NULL, " \t", &saveptr);
+  if (!hc->uri)
+    goto reqline_err;
+  hc->version = strtok_r(NULL, " \t", &saveptr);
+  if (!hc->version)
+    goto reqline_err;
+
+  hdrstore_load(&hc->req_hdrs, hdrs, NULL);
+
+  teval = hdrstore_get(&hc->req_hdrs, "TRANSFER-ENCODING", 0);
+
+  if (teval) {
+    te = hc->req_te;
+    te_copied = xobs_copy0(&hc->hdr_pool, teval, strlen(teval));
+    tok = strtok_r(te_copied, ", \t", &saveptr);
+
+    do {
+      tenum = str2te(tok);
+      if (tenum == HTTP_TE_UNKNOWN) {
+        xobs_free(&hc->hdr_pool, te_copied);
+        set_response(hc, HTTP_NOT_IMPLEMENTED, 1);
+        return 0;
+      }
+      if (te < hc->req_te + HTTP_TE_MAX)
+        *te++ = tenum;
+      else {
+        xobs_free(&hc->hdr_pool, te_copied);
+        set_response(hc, HTTP_BAD_REQUEST, 1); /* TODO: find the right code. */
+        return 0;
+      }
+    } while ((tok = strtok_r(NULL, ", \t", &saveptr)) != NULL);
+  }
+  if (hc->req_te[0] == HTTP_TE_NONE)
+    hc->req_te[0] = HTTP_TE_IDENTITY;
+
+  {
+    const char *val;
+
+    val = hdrstore_get(&hc->req_hdrs, "CONNECTION", 0);
+    if (val) {
+      if (strcmp(val, "close") == 0)
+        hc->rsp_disconnect = 1;
+      else
+        hc->rsp_disconnect = 0;
+    }
+    else if (strcmp(hc->version, "HTTP/1.0") == 0)
+      hc->rsp_disconnect = 1;
+  }
+
+#ifndef NDEBUG
+  hdrstore_dump(&hc->req_hdrs, stderr);
+#endif
+
+  return 1;
+
+ reqline_err:
+  set_response(hc, HTTP_BAD_REQUEST, 1);
+  return 0;
+}
+#endif  /* 0 */
 
 static __inline__ void
 set_content_length(ev_httpconn *hc)
@@ -718,7 +806,7 @@ prepare_recv_body(struct ev_loop *loop, ev_httpconn *hc)
       hc->form = &hc->form_;
     form_init(hc->form);
 
-    if (form_set_parser(hc->form, &hc->req_hdrs) == 0) {
+    if (form_set_parser(hc->form, &hc->req_hdrs) == -1) {
       /* If we can't prepare right form parser, keep going without
        * form handling routines */
       form_free(hc->form);
@@ -789,6 +877,7 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
       goto recv_body;
     }
     else if (hc->state == HC_RECV_BODY) {
+    recv_body: /* We may need to read from FD for POST requests */
       if (buffer_fill_fd(&hc->ibuf, w->fd, hc->http->ibufsize, &eof) == -1) {
         xdebug(errno, "read failed (errno=%d)", errno);
         ev_httpconn_stop(loop, hc);
@@ -800,7 +889,6 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
         return;
       }
 
-    recv_body: /* TODO: am I sure that this label is after buffer_fill_fd()? */
       if (hc->body_chnk) {            /* chunked encoding */
         abort();                      /* TODO: implement */
       }
