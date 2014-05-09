@@ -100,8 +100,8 @@ int buffer_find(struct buffer *buf, const void *seed, size_t size,
  * ...
  * buffer_advance(buffer, nextnode, p, seed_size);
  */
-void buffer_advance(struct buffer *b, struct bufnode *n,
-                    char *next, int offset);
+int buffer_advance(struct buffer *b, struct bufnode *n,
+                   char *next, int offset);
 
 
 /*

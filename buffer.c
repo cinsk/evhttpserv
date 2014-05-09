@@ -401,10 +401,12 @@ buffer_find(struct buffer *buf, const void *seed, size_t size,
 #endif  /* 0 */
 
 
-void
+#if 0
+int
 buffer_advance(struct buffer *b, struct bufnode *n, char *next, int offset)
 {
   struct bufnode *p;
+  size_t bsz = b->nbytes;
 
   if (!n)
     n = b->head;
@@ -429,6 +431,8 @@ buffer_advance(struct buffer *b, struct bufnode *n, char *next, int offset)
     n->last = n->end;
   }
 
+  /* TODO: something related to offset below looks buggy!! */
+
   if (n->begin >= n->end) {     /* N is empty. */
     offset -= n->end - next;
     buffer_remove_buf(b);       /* delete N from the buffer, B */
@@ -445,7 +449,47 @@ buffer_advance(struct buffer *b, struct bufnode *n, char *next, int offset)
       assert(offset == 0);
     }
   }
+
+  /* TODO: return the number of byte(s) it passed */
 }
+#else
+int
+buffer_advance(struct buffer *b, struct bufnode *n, char *next, int offset)
+{
+  struct bufnode *p;
+  size_t bsz = b->nbytes;
+
+  if (!n)
+    n = b->head;
+  if (!next)
+    next = n->end;
+
+  while (b->head && b->head != n) {
+    p = buffer_remove_buf(b);
+    free(p);
+  }
+
+  assert(n->data <= next && next <= n->data + n->size);
+  b->nbytes -= (next - n->begin);
+  n->begin = next;
+  n->last = next;
+
+  while (n && offset > 0) {
+    size_t remains = n->end - n->begin;
+    if (remains > offset) {
+      n->begin += offset;
+      b->nbytes -= offset;
+      break;
+    }
+    else {
+      buffer_remove_buf(b);
+      offset -= remains;
+      n = b->head;
+    }
+  }
+  return bsz - b->nbytes;
+}
+#endif
 
 
 // copy the contents from the beginning of the buffer to POS into the OBS
