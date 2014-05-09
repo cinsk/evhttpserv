@@ -188,6 +188,8 @@ mp_parse(struct form *f, struct buffer *b, int eos)
   struct mpparser *mp = (struct mpparser *)f->padata;
   bufpos found;
 
+  xdebug(0, "mp_parse()-----------------");
+
   switch (mp->state) {
   case MPS_RECV_BNDY:
   recv_bndy:
@@ -208,7 +210,7 @@ mp_parse(struct form *f, struct buffer *b, int eos)
 
     if (mp->remains <= 2) {
       if (buffer_find(b, CRLF, CRLFLEN, &found, 0)) {
-        buffer_advance(b, found.node, found.ptr, 0);
+        buffer_advance(b, found.node, found.ptr, CRLFLEN);
         return 1;
       }
       else
@@ -272,9 +274,14 @@ mp_parse(struct form *f, struct buffer *b, int eos)
           return -1;
         }
         mp->remains -= written;
-        lseek(mp->current->v.file.fd, -CRLFLEN, SEEK_CUR);
-        buffer_seek(b, mp->boundary_size, SEEK_SET, &found);
-        mp->remains -= buffer_advance(b, found.node, found.ptr, CRLFLEN);
+        {
+          off_t off = lseek(mp->current->v.file.fd, -CRLFLEN, SEEK_END);
+          if (off != (off_t)-1)
+            ftruncate(mp->current->v.file.fd, off);
+        }
+
+        // buffer_seek(b, mp->boundary_size, SEEK_SET, &found);
+        // mp->remains -= buffer_advance(b, found.node, found.ptr, 0);
       }
       else if (mp->current->type == FORM_STRING) {
         size_t sz;
@@ -282,8 +289,7 @@ mp_parse(struct form *f, struct buffer *b, int eos)
         sz = xobs_object_size(&f->pool);
         mp->current->v.str = xobs_finish(&f->pool);
         ((char *)(mp->current->v.str))[sz - CRLFLEN] = '\0';
-        mp->remains -= buffer_advance(b, found.node, found.ptr,
-                                      mp->boundary_size + CRLFLEN);
+        mp->remains -= buffer_advance(b, found.node, found.ptr, 0);
       }
     }
     else {
