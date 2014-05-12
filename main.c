@@ -80,6 +80,9 @@ main(int argc, char *argv[])
   ev_http_stop(loop, &http);
 
   xdebug(0, "evhttp terminated normally");
+
+  ev_loop_destroy(loop);
+  xobs_free(&pool, 0);
   return 0;
 }
 

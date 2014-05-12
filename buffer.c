@@ -27,6 +27,7 @@
 
 #include <unistd.h>
 
+#include "xerror.h"
 #include "buffer.h"
 #include "hexdump.h"
 #include "xobstack.h"
@@ -59,6 +60,7 @@ buffer_clear(struct buffer *b)
 {
   struct bufnode *p;
 
+  xdebug(0, "buffer_clear");
   while (b->head) {
     p = buffer_remove_buf(b);
     free(p);
@@ -116,6 +118,10 @@ static struct bufnode *
 bufnode_new(size_t size)
 {
   struct bufnode *p;
+
+  xdebug(0, "bufnode_new(%zu): %zu", size,
+         sizeof(*p) + size + BACKPAD_SIZE + REARPAD_SIZE);
+
   p = malloc(sizeof(*p) + size + BACKPAD_SIZE + REARPAD_SIZE);
   if (!p) {
     errno = ENOMEM;           /* redundant, according to UNIX 98 */
@@ -512,6 +518,7 @@ buffer_advance(struct buffer *b, struct bufnode *n, char *next, int offset)
     }
     else {
       buffer_remove_buf(b);
+      free(n);
       offset -= remains;
       n = b->head;
     }

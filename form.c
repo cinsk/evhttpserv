@@ -124,6 +124,9 @@ form_parse(struct form *f, struct buffer *b, int eos)
   int ret;
 
   ret = form_parser_parse(f, b, eos);
+
+  return ret;
+#if 0
   if (ret == 0)
     return 0;
   else if (ret == 1) {
@@ -133,13 +136,23 @@ form_parse(struct form *f, struct buffer *b, int eos)
     /* TODO: how to handle the error? */
     return -1;
   }
+#endif
 }
 
 
 void
 form_free(struct form *f)
 {
+  struct forment *hp, *tmp;
+
   /* TODO: release f.root */
+  form_parser_close(f);
+
+  HASH_ITER(hh, f->root, hp, tmp) {
+    hdrstore_free(&hp->hdrs, 1);
+    HASH_DEL(f->root, hp);
+  }
+
   xobs_free(&f->pool, NULL);
 }
 
@@ -193,6 +206,8 @@ mp_open(struct form *f, struct hdrstore *req)
 static int
 mp_close(struct form *f)
 {
+  struct mpparser *mp = (struct mpparser *)f->padata;
+
   return -1;
 }
 
