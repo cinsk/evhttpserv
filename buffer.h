@@ -1,14 +1,43 @@
+/*
+ * libev-based HTTP server implementation
+ * Copyright (C) 2014  Seong-Kook Shin <cinsky@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as
+ * published by the Free Software Foundation; either version 2.1 of the
+ * License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ */
 #ifndef BUFFER_H__
 #define BUFFER_H__
+
+/*
+ * A buffer implementation for buffered input/output.
+ *
+ * A BUFFER consists of a list of BUFNODE.  The contents of the
+ * BUFFER is a concatenation of all BUFNODEs.  The contents of
+ * single BUFNODE starts from BEGIN to END.
+ */
 
 #include <string.h>
 
 struct xobs;                    /* forward declaration */
 
 struct bufnode {
-  char *begin, *end;
-  char *last;
-  size_t size;
+  char *begin;                  /* points the start of the content */
+  char *end;                    /* poitns the +1 last of the contents */
+  char *last;                   /* not used for now */
+  size_t size;                  /* size of DATA member.
+                                 * See bufnode_new() for more. */
   struct bufnode *next;
   char data[0];
 };
@@ -22,9 +51,9 @@ struct buffer {
   struct bufnode *head;
   struct bufnode *tail;
 
-  size_t nbuf;
-  size_t nbytes;
-  size_t sizehint;
+  size_t nbuf;                  /* number of BUFNODEs */
+  size_t nbytes;                /* number of byte(s) in this buffer */
+  size_t sizehint;         /* size hint for the size of new BUFNODE */
 };
 
 #define BUFNODE_AVAIL(n)        ((n)->data + (n)->size - (n)->end)
