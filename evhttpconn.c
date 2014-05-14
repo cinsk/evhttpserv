@@ -584,6 +584,7 @@ load_req_line_headers(ev_httpconn *hc, char *req)
 }
 
 
+#if 0
 static __inline__ void
 set_content_length(ev_httpconn *hc)
 {
@@ -592,6 +593,7 @@ set_content_length(ev_httpconn *hc)
   xobs_sprintf(&hc->hdr_pool, "%zu", buffer_size(&hc->obuf, NULL));
   hdrstore_set(&hc->rsp_hdrs, "Content-Length", xobs_finish(&hc->hdr_pool), 0);
 }
+#endif  /* 0 */
 
 
 static __inline__ void
@@ -613,7 +615,11 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
 
   case HM_POST:
 #ifdef EVHTTP_HANDLE_FORM
-    /* TODO:  */
+    /* Since the user callback may be called several times to complete
+     * the request, we need to make sure that form parsing is done at the
+     * very first time only.
+     *
+     * TODO: we need to call form_* function iff (hc->body_chnk == 0) */
     if (!hc->form.boundary) {
       hc->form.boundary = form_parse_boundary(hc);
       if (!hc->form.boundary) {
@@ -650,6 +656,7 @@ prepare_recv_req(struct ev_loop *loop, struct ev_httpconn *hc)
   hc->state = HC_RECV_REQ;
   ev_httpconn_reset(hc, 0);
 }
+
 
 static __inline__ void
 prepare_send_rsp(struct ev_loop *loop, ev_httpconn *hc)
@@ -838,8 +845,12 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
         if (hc->body_rest <= 0) {
           hc->state = HC_SEND_BODY;
 
-          hc->body_size = hc->body_rest = buffer_size(&hc->obuf, NULL);
           hc->body_chnk = (hc->eob == 0);
+
+          if (hc->body_chnk)
+            buffer_prependf(&hc->obuf, "%zu\r\n", BUFFER_SIZE(&hc->obuf));
+          hc->body_size = hc->body_rest = buffer_size(&hc->obuf, NULL);
+
           goto send_body;
         }
         return;
@@ -847,45 +858,46 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
     }
     else if (hc->state == HC_SEND_BODY) {
     send_body:
-      /* TODO: call buffer_flush() here. */
-      if (hc->body_chnk) {
-        // TODO: add the chunk size in backpad area of the first bufnode
-        //       in OBUF.
-        abort();                  /* TODO: implement */
+      written = buffer_flush(&hc->obuf, NULL, NULL, hc->io.fd);
+      if (written == -1) {
+        xdebug(errno, "buffer_flush() failed");
+        ev_httpconn_stop(loop, hc);
+        return;
       }
-      else {
-        written = buffer_flush(&hc->obuf, NULL, NULL, hc->io.fd);
-        if (written == -1) {
-          xdebug(errno, "buffer_flush() failed");
-          ev_httpconn_stop(loop, hc);
-          return;
-        }
-        hc->body_rest -= written;
-        if (hc->body_rest <= 0) {
-          if (hc->eob) {
-            if (hc->rsp_disconnect) {
-              ev_httpconn_stop(loop, hc);
-              return;
-            }
-            else {
-              prepare_recv_req(loop, hc);
-              if (buffer_size(&hc->ibuf, NULL) > 0)
-                goto recv_req;
-              /* We don't have any remaining bytes in the IBUF.
-               * Thus, waiting for libev to send EV_READ. */
-              return;
-            }
+      hc->body_rest -= written;
+      if (hc->body_rest <= 0) {
+        if (hc->eob) {
+          if (hc->rsp_disconnect) {
+            ev_httpconn_stop(loop, hc);
+            return;
           }
           else {
-            /* We've send everything we have so far, but the whole
-             * response body is not complete yet. so ask the callback
-             * to fill more body part. */
-            do_callback(loop, hc, 1);
-            /* TODO */
+            prepare_recv_req(loop, hc);
+            if (buffer_size(&hc->ibuf, NULL) > 0)
+              goto recv_req;
+            /* We don't have any remaining bytes in the IBUF.
+             * Thus, waiting for libev to send EV_READ. */
             return;
           }
         }
-      } /* for identity TE */
+        else {
+          /* We've send everything we have so far, but the whole
+           * response body is not complete yet. so ask the callback
+           * to fill more body part. */
+          do_callback(loop, hc, 1);
+
+#ifdef VERIFY_THIS_FOR_CHUNKED_ENCODING
+          /* TODO */
+          buffer_prependf(&hc->obuf, "%zu\r\n", BUFFER_SIZE(&hc->obuf));
+
+          if (do_callback_returns_with_eob_set) {
+            buffer_append(&hc->obuf, "0\r\n\r\n");
+          }
+          hc->body_size = hc->body_rest = BUFFER_SIZE(&hc->obuf);
+#endif      /* 0 */
+          return;
+        }
+      } /* if (hc->body_rest <= 0) else ... */
     }   /* hc->state == HC_SEND_BODY */
   }     /* EV_WRITE */
 }
