@@ -95,6 +95,10 @@ extern const char *xthread_get_name(char *buf, size_t sz);
 
 /*
  * xerror() is the same as error() in GLIBC.
+ *
+ * If STATUS is zero, it just return after printing the message.  If
+ * STATUS is greater than zero, it calls exit(STATUS).  Otherwise
+ * xerror() calls abort().
  */
 extern void xerror(int status, int code, const char *format, ...)
   __attribute__((format (printf, 3, 4)));

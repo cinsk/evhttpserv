@@ -304,6 +304,7 @@ xbacktrace_on_signals(int signo, ...)
   return 0;
 }
 
+
 void
 xerror(int status, int code, const char *format, ...)
 {
@@ -313,8 +314,13 @@ xerror(int status, int code, const char *format, ...)
   xmessage(!printtid_mode, code, 0, printtid_mode, format, ap);
   va_end(ap);
 
-  if (status)
+  if (!status)
+    return;
+
+  if (status > 0)
     exit(status);
+
+  abort();
 }
 
 
