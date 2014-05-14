@@ -259,6 +259,56 @@ buffer_fill_fd(struct buffer *b, int fd, size_t size, int *eof)
 
 
 int
+buffer_prepend(struct buffer *b, const void *src, size_t sz)
+{
+  struct bufnode *nptr = b->head;
+
+  if (!nptr) {
+    nptr = buffer_grow_capacity(b, sz);
+    if (!nptr)
+      return -1;
+    memcpy(nptr->begin, src, sz);
+    nptr->end += sz;
+    b->nbytes += sz;
+    return sz;
+  }
+
+  if (nptr->begin - nptr->data < sz) {
+    /* we simply don't have enough room to store SZ byte(s). Since
+     * buffer_prepend() is designed to prepend data less than
+     * BACKPAD_SIZE, we will abort the program in this case. */
+    xerror(-1, 0, "can't handle prepending data larger than %zu byte(s)", sz);
+  }
+  nptr->begin -= sz;
+  memcpy(nptr->begin, src, sz);
+  b->nbytes += sz;
+
+  return sz;
+}
+
+
+int
+buffer_prependf(struct buffer *b, const char *format, ...)
+{
+  va_list ap;
+  int len;
+  char *buf;
+
+  va_start(ap, format);
+  len = vsnprintf(NULL, 0, format, ap);
+  va_end(ap);
+
+  buf = alloca(len + 1);
+
+  va_start(ap, format);
+  vsnprintf(buf, len + 1, format, ap);
+  va_end(ap);
+
+  return buffer_prepend(b, buf, len);
+}
+
+
+int
 buffer_printf(struct buffer *b, const char *format, ...)
 {
   struct bufnode *nptr;

@@ -99,6 +99,25 @@ ssize_t buffer_fill_fd(struct buffer *b, int fd, size_t size, int *eof);
 
 
 /*
+ * Prepend the memory pointed by SRC with SZ byte(s) into the buffer.
+ *
+ * SZ must be equal or less than BUFFER_BACKPAD_SIZE.  Otherwise, it
+ * will call abort().
+ *
+ * This function will return -1 on failure (out of memory).  Otherwise
+ * it returns zero.
+ */
+int buffer_prepend(struct buffer *b, const void *src, size_t sz);
+
+/*
+ * Convenient function to buffer_prepend().  Note that
+ * '\0' character is not prepended.
+ */
+int buffer_prependf(struct buffer *b, const char *format, ...)
+  __attribute__((format (printf, 2, 3)));
+
+
+/*
  * Find SEED with SIZE byte(s) from the buffer contents.
  *
  * FROM should points the starting position for the searching.
