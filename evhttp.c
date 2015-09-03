@@ -313,7 +313,15 @@ ev_http_init(ev_http *http, size_t nworkers, http_callback cb, char *address,
     ev_io_init(&http->io, ev_http_producer_cb, fd, EV_READ);
   }
 
+  patable_init(&http->dispatcher);
   return 1;
+}
+
+
+int
+ev_http_dispatcher_add(ev_http *http, const char *pattern, http_callback cb)
+{
+  return patable_add(&http->dispatcher, pattern, (const void *)cb);
 }
 
 

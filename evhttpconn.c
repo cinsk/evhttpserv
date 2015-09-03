@@ -24,7 +24,7 @@
 #include "common.h"
 #include "evhttp.h"
 #include "evhttpconn.h"
-
+#include "patable.h"
 #include "xerror.h"
 
 
@@ -593,6 +593,28 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
 
   /* TODO: how to pass EOB to the callback? */
 
+#ifdef PATABLE_USE_PCRE
+  int ovector[80];
+#else
+  regmatch_t ovector[40];
+#endif
+  int grpc;
+  int index;
+  char **grpv = 0;
+  http_callback cb;
+
+  index = patable_match(&hc->http->dispatcher, hc->uri, (size_t)-1,
+                        &grpc, ovector, sizeof(ovector) / sizeof(ovector[0]));
+  if (index != -1) {
+    /* WARNING!!! Verify that using hc->hdr_pool is SAFE here */
+    grpv = patable_groups(&hc->hdr_pool, grpc, hc->uri, ovector);
+    // patable_free_groups(&hc->hdr_pool, grpv);
+    cb = (http_callback)(hc->http->dispatcher.pat[index].data);
+  }
+  else {
+    cb = hc->http->cb;
+  }
+
   switch (hc->method) {
   case HM_GET:
   case HM_HEAD:
@@ -603,7 +625,7 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
         form_parse(hc->form, &hc->ibuf, 1);
       }
     }
-    if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0) {
+    if (cb(loop, hc, eob, EV_READ | EV_CUSTOM, grpc, grpv) == 0) {
       hc->eob = 1;
       // if (!hc->body_chnk && calc_len) set_content_length(hc);
     }
@@ -615,12 +637,12 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
         /* If we've parsed the form for the callback, the callback MUST
          * return zero (job finished).  The callback should not return
          * nonzero value */
-        hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM);
+        cb(loop, hc, eob, EV_READ | EV_CUSTOM, grpc, grpv);
         hc->eob = 1;
       }
     }
     else {
-      if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0) {
+      if (cb(loop, hc, eob, EV_READ | EV_CUSTOM, grpc, grpv) == 0) {
         hc->eob = 1;
       }
     }
@@ -920,7 +942,7 @@ ev_httpconn_timer_cb(struct ev_loop *loop, ev_timer *w, int revents)
     xdebug(0, "%c_timeout for fd %d",
            ((hc->io.events & EV_READ) ? 'r' : 'w'), hc->io.fd);
 
-    if (!hc->http->cb(loop, hc, 0, EV_TIMER)) {
+    if (!hc->http->cb(loop, hc, 0, EV_TIMER, 0, 0)) {
       /* The user agreed to release the connection */
       xdebug(0, "close the connection (reason = timeout)");
       ev_httpconn_stop(loop, hc);

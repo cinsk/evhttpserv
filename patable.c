@@ -133,6 +133,7 @@ patable_match(struct patable *table, const char *source, size_t len,
       return i;
     }
   }
+  *ngroup = 0;
   return -1;
 }
 

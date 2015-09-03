@@ -31,14 +31,24 @@ int debug_mode = 1;
 
 struct xobs pool;
 
-
-int req_callback(struct ev_loop *loop, struct ev_httpconn *w,
-                 int eob, int revents);
+static int handle_req(struct ev_loop *loop, struct ev_httpconn *w,
+                      int eob, int revents,
+                      int argc, const char *argv[]);
+static int def_callback(struct ev_loop *loop, struct ev_httpconn *w,
+                        int eob, int revents,
+                        int argc, const char *argv[]);
+static int db_callback(struct ev_loop *loop, struct ev_httpconn *w,
+                       int eob, int revents,
+                       int argc, const char *argv[]);
+static int mgr_callback(struct ev_loop *loop, struct ev_httpconn *w,
+                        int eob, int revents,
+                        int argc, const char *argv[]);
 
 static void sigint_cb(struct ev_loop *loop, ev_signal *w, int revents);
 
 ev_http http;
 ev_signal sigint_watcher;
+
 
 int
 main(int argc, char *argv[])
@@ -68,8 +78,11 @@ main(int argc, char *argv[])
 
   // ev_set_io_collect_interval(loop, 0.000001);
 
-  ev_http_init(&http, atoi(argv[2]), req_callback, "0.0.0.0", atoi(argv[1]), -1);
+  ev_http_init(&http, atoi(argv[2]), def_callback, "0.0.0.0", atoi(argv[1]), -1);
   ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
+
+  ev_http_dispatcher_add(&http, "/db/(.*)", db_callback);
+  ev_http_dispatcher_add(&http, "/mgr/(.*)/(.*)", mgr_callback);
 
   ev_http_start(loop, &http);
   ev_signal_start(loop, &sigint_watcher);
@@ -87,16 +100,22 @@ main(int argc, char *argv[])
 }
 
 
-int
-req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
+static int
+handle_req(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents,
+           int argc, const char *argv[])
 {
-  xdebug(0, "req_callback (revents: %08x)", revents);
-
   if (revents & EV_TIMEOUT)
     return 0;
 
   else if (revents & EV_READ) {
     if (w->method == HM_GET) {
+
+      {
+        int i;
+        for (i = 0; i < argc; i++)
+          xdebug(0, "ARGV[%d]: |%s|\n", i, argv[i]);
+      }
+
       w->rsp_code = HTTP_OK;
       xdebug(0, "Request(%s, %s): %s", w->method_string, w->version, w->uri);
       buffer_printf(&w->obuf, "<html><body><p>hello</p>\n");
@@ -115,7 +134,7 @@ req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
       buffer_printf(&w->obuf, "</body></html>\n");
       // sprintf(v, "%u", xobs_object_size(&w->rsp_pool));
       // hdrstore_set(&w->rsp_hdrs, "Content-Length", v, 0);
-      hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive", 0);
+      // hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive", 0);
 
       xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
       hdrstore_set(&w->rsp_hdrs, "Content-Length",
@@ -138,6 +157,33 @@ req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
   }
 
   return 0;
+}
+
+
+static int
+def_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents,
+             int argc, const char *argv[])
+{
+  xdebug(0, "def_callback (revents: %08x)", revents);
+  return handle_req(loop, w, eob, revents, argc, argv);
+}
+
+
+static int
+db_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents,
+             int argc, const char *argv[])
+{
+  xdebug(0, "req_callback (revents: %08x)", revents);
+  return handle_req(loop, w, eob, revents, argc, argv);
+}
+
+
+static int
+mgr_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents,
+             int argc, const char *argv[])
+{
+  xdebug(0, "mgr_callback (revents: %08x)", revents);
+  return handle_req(loop, w, eob, revents, argc, argv);
 }
 
 

@@ -36,6 +36,7 @@
 #endif  /* 0 */
 
 #include "evhttpconn.h"
+#include "patable.h"
 
 /* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
@@ -84,7 +85,9 @@ BEGIN_C_DECLS
  */
 typedef int (*http_callback)(struct ev_loop *loop, struct ev_httpconn *w,
                              int eob,
-                             int revents);
+                             int revents,
+                             int argc,
+                             const char *argv[]);
 
 /*
   struct ev_httpconn {
@@ -140,6 +143,8 @@ struct ev_http {
   pcre_extra *boundary_ext;
 #endif
 
+  struct patable dispatcher;
+
   struct httpworker *workers;
   size_t nworkers;
 };
@@ -147,6 +152,9 @@ typedef struct ev_http ev_http;
 
 int ev_http_init(ev_http *http, size_t nworkers, http_callback cb, char *address,
                  int port, int ctrl_port);
+
+int ev_http_dispatcher_add(ev_http *http, const char *pattern, http_callback cb);
+
 void ev_http_start(struct ev_loop *loop, ev_http *http);
 void ev_http_break(struct ev_loop *loop, ev_http *http);
 void ev_http_stop(struct ev_loop *loop, ev_http *http);

@@ -23,14 +23,15 @@
 #define PATABLE_USE_PCRE
 
 #ifdef PATABLE_USE_PCRE
-#include <pcre.h>
+# include <pcre.h>
 
-#ifndef PCRE_STUDY_JIT_COMPILE
-#define PCRE_STUDY_JIT_COMPILE 0
-#endif
+# ifndef PCRE_STUDY_JIT_COMPILE
+#  define PCRE_STUDY_JIT_COMPILE 0
+# endif
 #else
-#include <regex.h>
+# include <regex.h>
 #endif
+
 
 /* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
@@ -56,7 +57,7 @@ struct patentry {
   regex_t re;
 #endif
 
-  pat_callback cb;
+  //pat_callback cb;
   unsigned flags;
   void *data;
 };
@@ -120,7 +121,6 @@ re_match(pcre *re, pcre_extra *extra, const char *source, size_t len,
                    ovector, ovsize);
 }
 
-
 /*
  * Convenient function to retrive the subgroups from the OVECTOR set
  * by re_match().  NGROUP is the number of subgroups + 1, which is the
@@ -132,9 +132,9 @@ re_match(pcre *re, pcre_extra *extra, const char *source, size_t len,
  * will return NULL on errors, so make sure you call xobs_free() iff
  * when re_groups() succeeded.
  */
-char **re_groups(struct xobs *pool, size_t ngroup,
-                 const char *source, const int *ovector)
-  __attribute__ ((alias("patable_groups")));
+/* char **re_groups(struct xobs *pool, size_t ngroup, */
+/*                  const char *source, const int *ovector) */
+/*   __attribute__ ((alias("patable_groups"))); */
 
 
 #else  /* PATABLE_USE_PCRE */

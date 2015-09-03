@@ -8,7 +8,7 @@ CFLAGS=-Wall -g3 -DEVHTTP_HANDLE_FORM
 #CFLAGS=-Wall -O2 -fomit-frame-pointer -DNDEBUG
 LIBS=-lpcre -lev -lpthread
 
-OBJS=evhttp.o evhttpconn.o xerror.o xobstack.o hdrstore.o buffer.o hexdump.o form.o common.o
+OBJS=evhttp.o evhttpconn.o xerror.o xobstack.o hdrstore.o buffer.o hexdump.o form.o common.o patable.o
 
 TOPDIR := $(shell pwd)
 LIBOBJS := $(OBJS)
