@@ -20,17 +20,52 @@
 #ifndef PATABLE_H__
 #define PATABLE_H__
 
-#define USE_PCRE
+#define PATABLE_USE_PCRE
 
-struct pentry;
+#ifdef PATABLE_USE_PCRE
+#include <pcre.h>
+
+#ifndef PCRE_STUDY_JIT_COMPILE
+#define PCRE_STUDY_JIT_COMPILE 0
+#endif
+#else
+#include <regex.h>
+#endif
+
+/* This indirect using of extern "C" { ... } makes Emacs happy */
+#ifndef BEGIN_C_DECLS
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
+#endif /* BEGIN_C_DECLS */
+
+BEGIN_C_DECLS
+
+#define PE_FORM 0x0001
+
+struct patentry {
+#ifdef PATABLE_USE_PCRE
+  pcre *re;
+  pcre_extra *ext;
+#else
+  int used;
+  regex_t re;
+#endif
+
+  pat_callback cb;
+  unsigned flags;
+  void *data;
+};
 
 struct patable {
   size_t npat;
   int cur;
-  struct pentry *pat;
+  struct patentry *pat;
 };
-
-typedef void (*pat_callback)(int grpc, char *grpv[]);
 
 int patable_init(struct patable *pat);
 #if 0
@@ -45,7 +80,7 @@ int patable_add(struct patable *table, const char *pattern, const void *data);
 void patable_release(struct patable *pat);
 
 
-#ifdef USE_PCRE
+#ifdef PATABLE_USE_PCRE
 /* perform regular expression match on all patterns in TABLE against
  * SOURCE.  LEN is the length of the SOURCE unless it is (size_t)-1.
  * You should pass the OVECTOR which has OVSIZE numbers of int, to
@@ -102,12 +137,12 @@ char **re_groups(struct xobs *pool, size_t ngroup,
   __attribute__ ((alias("patable_groups")));
 
 
-#else  /* USE_PCRE */
+#else  /* PATABLE_USE_PCRE */
 int patable_match(struct patable *table, const char *source, size_t len,
                   int *ngroup, regmatch_t *ovector, size_t ovsize);
 char **patable_groups(struct xobs *pool, size_t ngroup,
                       const char *source, const regmatch_t *ovector);
-#endif  /* USE_PCRE */
+#endif  /* PATABLE_USE_PCRE */
 
 /*
  * Retrive the user data pointed by INDEX.
@@ -119,5 +154,7 @@ void *patable_data(struct patable *table, int index);
  * Release the subgroup vector built from patable_groups()
  */
 void patable_free_groups(struct xobs *pool, char **grpv);
+
+END_C_DECLS
 
 #endif /* PATABLE_H__ */

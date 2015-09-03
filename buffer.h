@@ -30,6 +30,19 @@
 
 #include <string.h>
 
+/* This indirect using of extern "C" { ... } makes Emacs happy */
+#ifndef BEGIN_C_DECLS
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
+#endif /* BEGIN_C_DECLS */
+
+BEGIN_C_DECLS
+
 struct xobs;                    /* forward declaration */
 
 struct bufnode {
@@ -96,25 +109,6 @@ void buffer_clear(struct buffer *b);
  * error) it returns -1.
  */
 ssize_t buffer_fill_fd(struct buffer *b, int fd, size_t size, int *eof);
-
-
-/*
- * Prepend the memory pointed by SRC with SZ byte(s) into the buffer.
- *
- * SZ must be equal or less than BUFFER_BACKPAD_SIZE.  Otherwise, it
- * will call abort().
- *
- * This function will return -1 on failure (out of memory).  Otherwise
- * it returns zero.
- */
-int buffer_prepend(struct buffer *b, const void *src, size_t sz);
-
-/*
- * Convenient function to buffer_prepend().  Note that
- * '\0' character is not prepended.
- */
-int buffer_prependf(struct buffer *b, const char *format, ...)
-  __attribute__((format (printf, 2, 3)));
 
 
 /*
@@ -370,5 +364,7 @@ buffer_getc();
 char *buffer_gets(); // next buffer operation may invalidate the returned ptr
 
 #endif  /* 0 */
+
+END_C_DECLS
 
 #endif /* BUFFER_H__ */

@@ -21,11 +21,24 @@
 #define EVHTTPCONN_H__
 
 
-#include <ev.h>
+#include "common.h"
 #include "xobstack.h"
 #include "hdrstore.h"
 #include "buffer.h"
 #include "form.h"
+
+/* This indirect using of extern "C" { ... } makes Emacs happy */
+#ifndef BEGIN_C_DECLS
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
+#endif /* BEGIN_C_DECLS */
+
+BEGIN_C_DECLS
 
 enum HTTP_METHOD {
   HM_NONE,
@@ -135,5 +148,6 @@ int ev_httpconn_init(ev_httpconn *hc, struct ev_http *http, int fd, size_t *refc
 void ev_httpconn_start(struct ev_loop *loop, ev_httpconn *hc);
 void ev_httpconn_stop(struct ev_loop *loop, ev_httpconn *hc);
 
+END_C_DECLS
 
 #endif /* EVHTTPCONN_H__ */

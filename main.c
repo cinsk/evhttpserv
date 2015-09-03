@@ -96,11 +96,23 @@ req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
     return 0;
 
   else if (revents & EV_READ) {
-
     if (w->method == HM_GET) {
       w->rsp_code = HTTP_OK;
       xdebug(0, "Request(%s, %s): %s", w->method_string, w->version, w->uri);
-      buffer_printf(&w->obuf, "<html><body>hello</body></html>\n");
+      buffer_printf(&w->obuf, "<html><body><p>hello</p>\n");
+
+      if (w->form) {
+        struct forment *ent;
+        buffer_printf(&w->obuf, "<pre>\n");
+        for (ent = w->form->root; ent != NULL; ent = ent->hh.next) {
+          if (FORMENT_TYPE(ent) == FORMENT_STRING)
+            buffer_printf(&w->obuf, "FORM: [%s]=|%s|\n",
+                          FORMENT_KEY(ent), FORMENT_AS_STRING(ent));
+        }
+        buffer_printf(&w->obuf, "</pre>\n");
+      }
+
+      buffer_printf(&w->obuf, "</body></html>\n");
       // sprintf(v, "%u", xobs_object_size(&w->rsp_pool));
       // hdrstore_set(&w->rsp_hdrs, "Content-Length", v, 0);
       hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive", 0);
@@ -108,6 +120,7 @@ req_callback(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents)
       xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
       hdrstore_set(&w->rsp_hdrs, "Content-Length",
                    xobs_finish(&w->hdr_pool), 0);
+
     }
     else if (w->method == HM_POST) {
       if (w->form)

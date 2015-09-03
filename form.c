@@ -25,16 +25,11 @@
 #include <unistd.h>
 #include <sys/uio.h>
 
+#include "common.h"
 #include "form.h"
 #include "xobstack.h"
 #include "xerror.h"
 #include "buffer.h"
-
-#define CRLF    "\r\n"
-#define CRLFLEN (sizeof(CRLF) - 1)
-
-#define CRLF2    "\r\n\r\n"
-#define CRLF2LEN (sizeof(CRLF2) - 1)
 
 #define TMPFILE_MAX     PATH_MAX
 
@@ -100,8 +95,12 @@ form_set_parser(struct form *f, struct hdrstore *req)
 {
   const char *ctype = hdrstore_get(req, "CONTENT-TYPE", 0);
 
-  if (!ctype)
+  if (!ctype) {
+    /* HTTP method: GET */
+    if (hdrstore_get(req, "QUERY_STRING", 0))
+      f->parser = fue_parser;
     return 0;
+  }
 
   if (strcmp(ctype, "application/x-www-form-urlencoded") == 0)
     f->parser = fue_parser;
@@ -206,7 +205,7 @@ mp_open(struct form *f, struct hdrstore *req)
 static int
 mp_close(struct form *f)
 {
-  struct mpparser *mp = (struct mpparser *)f->padata;
+  // struct mpparser *mp = (struct mpparser *)f->padata;
 
   return -1;
 }
@@ -280,7 +279,7 @@ mp_parse(struct form *f, struct buffer *b, int eos)
         form_entry_file_init(&f->pool, mp->current);
       }
       else
-        mp->current->type = FORM_STRING;
+        mp->current->type = FORMENT_STRING;
 
       mp->remains -= buffer_advance(b, found.node, found.ptr, CRLF2LEN);
       mp->state = MPS_RECV_BODY;
@@ -298,7 +297,7 @@ mp_parse(struct form *f, struct buffer *b, int eos)
        * The last 2 bytes before FOUND is CRLF.  I need to remove that
        * before writing to file or string. */
 
-      if (mp->current->type == FORM_FILE) {
+      if (mp->current->type == FORMENT_FILE) {
         size_t written;
         written = buffer_flush(b, found.node, found.ptr,
                                mp->current->v.file.fd);
@@ -317,7 +316,7 @@ mp_parse(struct form *f, struct buffer *b, int eos)
         // buffer_seek(b, mp->boundary_size, SEEK_SET, &found);
         // mp->remains -= buffer_advance(b, found.node, found.ptr, 0);
       }
-      else if (mp->current->type == FORM_STRING) {
+      else if (mp->current->type == FORMENT_STRING) {
         size_t sz;
         buffer_copy(&f->pool, b, &found);
         sz = xobs_object_size(&f->pool);
@@ -327,7 +326,7 @@ mp_parse(struct form *f, struct buffer *b, int eos)
       }
     }
     else {
-      if (mp->current->type == FORM_FILE) {
+      if (mp->current->type == FORMENT_FILE) {
         size_t written;
         size_t sz = BUFFER_SIZE(b);
         if (sz > mp->boundary_size) {
@@ -345,7 +344,7 @@ mp_parse(struct form *f, struct buffer *b, int eos)
     }
 
     /* Current part is finished */
-    if (mp->current->type == FORM_FILE)
+    if (mp->current->type == FORMENT_FILE)
       close(mp->current->v.file.fd);
 
     xdebug(0, "add name(%s) to the form", mp->current->k);
@@ -485,7 +484,7 @@ form_set_string(struct form *f,
   if (ent) {
     hdrstore_free(&ent->hdrs, 1); /* TODO: hdrstore_clear() */
 
-    if (ent->type == FORM_STRING) {
+    if (ent->type == FORMENT_STRING) {
       ent->v.str = value;
       if (!ent->v.str)
         return 0;
@@ -501,7 +500,7 @@ form_set_string(struct form *f,
 
   hdrstore_init(&ent->hdrs, &f->pool);
 
-  ent->type = FORM_STRING;
+  ent->type = FORMENT_STRING;
   ent->k = key;
   ent->v.str = value;
 
@@ -518,10 +517,10 @@ form_dump(FILE *fp, struct form *f)
   HASH_ITER(hh, f->root, p, tmp) {
     fprintf(fp, "[%s] = type(%d) ", p->k, p->type);
     switch (p->type) {
-    case FORM_STRING:
+    case FORMENT_STRING:
       fprintf(fp, "val: |%s|\n", p->v.str);
       break;
-    case FORM_FILE:
+    case FORMENT_FILE:
       fprintf(fp, "val: |%s| (%d)\n", p->v.file.path, p->v.file.fd);
       break;
     default:
@@ -540,7 +539,7 @@ form_entry_new(struct xobs *pool)
   hdrstore_init(&p->hdrs, pool);
 
   p->k = 0;
-  p->type = FORM_NIL;
+  p->type = FORMENT_NIL;
 
   return p;
 }
@@ -573,7 +572,7 @@ form_entry_file_init(struct xobs *pool, struct forment *ent)
     xerror(0, errno, "cannot create a temporary file");
     return NULL;
   }
-  ent->type = FORM_FILE;
+  ent->type = FORMENT_FILE;
   ent->v.file.fd = fd;
   ent->v.file.path = xobs_copy0(pool, tmpfile, strlen(tmpfile));
 
@@ -739,10 +738,10 @@ form_mpart_parse(struct xobs *pool, struct mpart *mp,
         int fd;
 
         /* TODO: For now, if there is a content-type header for the
-         *       part, we just use FORM_FILE to save the contents.
+         *       part, we just use FORMENT_FILE to save the contents.
          *       Later, we may need to parse content-type and use
-         *       FORM_FILE if the contents is a media type. */
-        mp->current->type = FORM_FILE;
+         *       FORMENT_FILE if the contents is a media type. */
+        mp->current->type = FORMENT_FILE;
 
         /* TODO: open the tmp file */
 
@@ -771,7 +770,7 @@ form_mpart_parse(struct xobs *pool, struct mpart *mp,
         mp->current->v.file.path = xobs_copy0(pool, tmpfile, strlen(tmpfile));
       }
       else {
-        mp->current->type = FORM_STRING;
+        mp->current->type = FORMENT_STRING;
       }
 
       buffer_advance(buffer, found.node, found.ptr, CRLF2LEN);
@@ -791,8 +790,8 @@ form_mpart_parse(struct xobs *pool, struct mpart *mp,
   case MPS_RECV_BODY:
   recv_body:
     assert(mp->current != 0);
-    /* TODO: FORM_STRING handling? */
-    if (mp->current->type == FORM_STRING) {
+    /* TODO: FORMENT_STRING handling? */
+    if (mp->current->type == FORMENT_STRING) {
       if (buffer_find(buffer, mp->boundary, mp->boundary_size,
                       &found, 0)) {
         buffer_copy(pool, buffer, &found);
@@ -838,7 +837,7 @@ form_value_type(struct form_entry *value)
 const char *
 form_value_string(struct form_entry *ent)
 {
-  assert(ent->type == FORM_STRING);
+  assert(ent->type == FORMENT_STRING);
   return ent->v.str;
 }
 
@@ -846,7 +845,7 @@ form_value_string(struct form_entry *ent)
 const char *
 form_value_file(struct form_entry *ent)
 {
-  assert(ent->type == FORM_FILE);
+  assert(ent->type == FORMENT_FILE);
   return ent->v.file.path;
 }
 
@@ -874,7 +873,7 @@ form_set_file(struct xobs *pool, struct form_entry **root,
   if (ent) {
     hdrstore_free(&ent->hdrs, 1); /* TODO: hdrstore_clear() */
 
-    if (ent->type == FORM_FILE) {
+    if (ent->type == FORMENT_FILE) {
       ent->v.file.path = xobs_copy0(pool, filename, strlen(filename));
       if (!ent->v.file.path)
         return 0;
@@ -890,7 +889,7 @@ form_set_file(struct xobs *pool, struct form_entry **root,
 
   hdrstore_init(&ent->hdrs, pool);
 
-  ent->type = FORM_FILE;
+  ent->type = FORMENT_FILE;
   klen = strlen(key);
   ent->k = xobs_copy0(pool, key, klen);
   if (!ent->k)
@@ -1053,7 +1052,7 @@ form_free(struct xobs *pool, struct form_entry *root, int reset_only)
   struct form_entry *p, *tmp;
 
   HASH_ITER(hh, root, p, tmp) {
-    if (p->type == FORM_FILE) {
+    if (p->type == FORMENT_FILE) {
       if (p->v.file.fd != -1) {
         close(p->v.file.fd);
         p->v.file.fd = -1;

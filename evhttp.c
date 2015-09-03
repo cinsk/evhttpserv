@@ -33,24 +33,11 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 
+#include "common.h"
 #include "evhttp.h"
 #include "evhttpconn.h"
 
 #include "xerror.h"
-
-#ifdef __GNUC__
-#ifndef offsetof
-#define offsetof(type, member)  __builtin_offsetof(type, member)
-#endif
-#endif
-
-#ifndef RCVBUF_SIZE
-#define RCVBUF_SIZE     8196
-#endif
-
-#ifndef SNDBUF_SIZE
-#define SNDBUF_SIZE     8196
-#endif
 
 static void ev_http_io_cb(struct ev_loop *loop, ev_io *w, int revents);
 static void ev_http_ctrl_cb(struct ev_loop *loop, ev_io *w, int revents);
@@ -415,7 +402,6 @@ ev_http_stop(struct ev_loop *loop, ev_http *http)
       pthread_join(http->workers[i].tid, &retval);
     }
   }
-
 }
 
 

@@ -24,6 +24,18 @@
 #include "uthash.h"
 #include "xobstack.h"
 
+/* This indirect using of extern "C" { ... } makes Emacs happy */
+#ifndef BEGIN_C_DECLS
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
+#endif /* BEGIN_C_DECLS */
+
+BEGIN_C_DECLS
 
 typedef enum {
   HTTP_INIT = 0,                /* initialized for responding */
@@ -177,5 +189,7 @@ int hdrstore_load(struct hdrstore *store, char *buf, void *data);
 int hdrstore_dump(struct hdrstore *store, FILE *fp);
 
 const char *statuscode2str(int statuscode);
+
+END_C_DECLS
 
 #endif /* HDRSTORE_H__ */

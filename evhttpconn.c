@@ -21,24 +21,12 @@
 #include <errno.h>
 #include <unistd.h>
 
+#include "common.h"
 #include "evhttp.h"
 #include "evhttpconn.h"
 
 #include "xerror.h"
 
-
-#ifdef __GNUC__
-#ifndef offsetof
-#define offsetof(type, member)  __builtin_offsetof(type, member)
-#endif
-#endif
-
-
-#define CRLF    "\r\n"
-#define CRLFLEN (sizeof(CRLF) - 1)
-
-#define CRLF2    "\r\n\r\n"
-#define CRLF2LEN (sizeof(CRLF2) - 1)
 
 
 #define IS_RECVING(hc)  ((hc)->io.events & EV_READ)
@@ -62,10 +50,6 @@ static __inline__ void set_content_length(ev_httpconn *hc);
 static __inline__ void do_callback(struct ev_loop *loop,
                                    ev_httpconn *hc, int eob);
 
-static void ev_httpconn_toggle_readwrite(struct ev_loop *loop, ev_httpconn *hc);
-
-static void ev_httpconn_write_cb(struct ev_loop *loop, ev_io *w, int revents);
-static void ev_httpconn_read_cb(struct ev_loop *loop, ev_io *w, int revents);
 static void ev_httpconn_timer_cb(struct ev_loop *loop,
                                  ev_timer *w, int revents);
 
@@ -277,52 +261,6 @@ ev_httpconn_reset(struct ev_httpconn *hc, int clear_ibuf)
 }
 
 
-static void
-ev_httpconn_toggle_readwrite(struct ev_loop *loop, ev_httpconn *hc)
-{
-  ev_io_stop(loop, &hc->io);
-
-  xdebug(0, "toggle_readwrite: %d", hc->state);
-  if (hc->io.cb == ev_httpconn_read_cb) {
-    if (hc->state == HC_SEND_RSP) {
-      // Transition from HC_RECV_RSP|HC_RECV_BODY.
-
-      /* TODO: make sure that required members in HC are actually right. */
-      if (0 /* some members in HC is not set correctly */) {
-        /* TODO: what now? */
-        set_response(hc, HTTP_INTERNAL_SERVER_ERROR, 1);
-        /* TODO: maybe we can write the reason using xdebug()? */
-      }
-      else {
-        assert(xobs_object_size(&hc->hdr_pool) == 0);
-        hdrstore_fill(&hc->rsp_hdrs, &hc->hdr_pool,
-                      hc->version, hc->rsp_code, 0);
-
-        hc->body_size = hc->body_rest = xobs_object_size(&hc->hdr_pool);
-        hc->rsp_line_hdrs = xobs_finish(&hc->hdr_pool);
-      }
-    }
-
-    ev_set_cb(&hc->io, ev_httpconn_write_cb);
-    ev_io_set(&hc->io, hc->io.fd, EV_WRITE);
-  }
-  else {
-    if (hc->state == HC_RECV_REQ) {
-      /* TODO: reset httpconn to the initial state!!! */
-      ev_httpconn_reset(hc, 0);
-      if (buffer_size(&hc->ibuf, NULL) > 0)
-        ev_feed_event(loop, &hc->io, EV_READ | EV_CUSTOM);
-    }
-    else
-      abort();
-
-    ev_set_cb(&hc->io, ev_httpconn_read_cb);
-    ev_io_set(&hc->io, hc->io.fd, EV_READ);
-    /* TODO: not implemented yet */
-  }
-  ev_io_start(loop, &hc->io);
-}
-
 static struct {
   const char *name;
   HTTP_METHOD method;
@@ -380,88 +318,6 @@ set_response(ev_httpconn *hc, int rsp_code, int disconnect)
   hc->eob = 1;
 }
 
-
-static void
-ev_httpconn_write_cb(struct ev_loop *loop, ev_io *w, int revents)
-{
-  ev_httpconn *hc = (ev_httpconn *)(((char *)w) - offsetof(ev_httpconn, io));
-  ssize_t written;
-
-  if (!(revents & EV_WRITE)) {
-    xdebug(0, "ev_httpconn_write_cb: receives revents, %x", revents);
-    return;
-  }
-  assert(hc->state == HC_SEND_RSP || hc->state == HC_SEND_BODY);
-
-  hc->acc_time = ev_now(loop);
-
-  if (hc->state == HC_SEND_RSP) {
-    /* hc->body_size is the size of the hc->rsp_line_hdrs,
-     * and we need to send data in hc->rsp_line_hdrs with range between
-     * (hc->body_size - hc->body_rest) and hc->body_size. */
-
-    written = write(hc->io.fd,
-                    hc->rsp_line_hdrs + hc->body_size - hc->body_rest,
-                    hc->body_rest);
-
-    if (written == -1) {
-      if (errno == EINTR || errno == EAGAIN)
-        return;
-      if (errno != ECONNRESET)
-        xdebug(errno, "ev_httpconn_write_cb: write(2) failed");
-      ev_httpconn_stop(loop, hc);
-    }
-    else {
-      hc->body_rest -= written;
-      if (hc->body_rest <= 0) {
-        hc->state = HC_SEND_BODY;
-
-        hc->body_size = hc->body_rest = buffer_size(&hc->obuf, NULL);
-        hc->body_chnk = (hc->eob == 0);
-        goto send_body;
-      }
-      return;
-    }
-  }
-  else {
-  send_body:
-    /* TODO: call buffer_flush() here. */
-
-    if (hc->body_chnk) {
-      // TODO: add the chunk size in backpad area of the first bufnode
-      //       in OBUF.
-
-      abort();                  /* TODO: implement */
-    }
-    else {
-      written = buffer_flush(&hc->obuf, NULL, NULL, hc->io.fd);
-      if (written == -1) {
-        xdebug(errno, "buffer_flush() failed");
-        ev_httpconn_stop(loop, hc);
-        return;
-      }
-      hc->body_rest -= written;
-      if (hc->body_rest <= 0) {
-        if (hc->eob) {
-          if (hc->rsp_disconnect) {
-            ev_httpconn_stop(loop, hc);
-            return;
-          }
-          else {
-            hc->state = HC_RECV_REQ;
-            ev_httpconn_toggle_readwrite(loop, hc);
-            return;
-          }
-        }
-        else { /* We've send everything we have, but it may be not finished. */
-          do_callback(loop, hc, 1);
-          /* TODO */
-          return;
-        }
-      }
-    }
-  }
-}
 
 /*
  * Set several parameters for receving request body.
@@ -634,10 +490,15 @@ load_req_line_headers(ev_httpconn *hc, char *req)
 
   line = req;
   hdrs = strstr(req, "\r\n");
-  if (!hdrs)
-    goto reqline_err;
-  *hdrs = '\0';
-  hdrs += CRLFLEN;
+
+  if (hdrs) {
+    *hdrs = '\0';
+    hdrs += CRLFLEN;
+  }
+  else {
+    /* In HTTP/1.0, it is possible that there is no header. */
+  }
+
 
   hc->method_string = strtok_r(line, " \t", &saveptr);
   if (!hc->method_string)
@@ -653,6 +514,14 @@ load_req_line_headers(ev_httpconn *hc, char *req)
     goto reqline_err;
 
   hdrstore_load(&hc->req_hdrs, hdrs, NULL);
+
+  {
+    char *qs_begin = strchr(hc->uri, '?');
+    if (qs_begin) {
+      *qs_begin = '\0';
+      hdrstore_set(&hc->req_hdrs, "QUERY_STRING", qs_begin + 1, NULL);
+    }
+  }
 
   teval = hdrstore_get(&hc->req_hdrs, "TRANSFER-ENCODING", 0);
 
@@ -706,7 +575,6 @@ load_req_line_headers(ev_httpconn *hc, char *req)
 }
 #endif  /* 0 */
 
-#if 0
 static __inline__ void
 set_content_length(ev_httpconn *hc)
 {
@@ -715,7 +583,6 @@ set_content_length(ev_httpconn *hc)
   xobs_sprintf(&hc->hdr_pool, "%zu", buffer_size(&hc->obuf, NULL));
   hdrstore_set(&hc->rsp_hdrs, "Content-Length", xobs_finish(&hc->hdr_pool), 0);
 }
-#endif  /* 0 */
 
 
 static __inline__ void
@@ -729,6 +596,13 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
   switch (hc->method) {
   case HM_GET:
   case HM_HEAD:
+    {
+      const char *qs = hdrstore_get(&hc->req_hdrs, "QUERY_STRING", 0);
+      if (qs) {
+        buffer_load(&hc->ibuf, qs, strlen(qs));
+        form_parse(hc->form, &hc->ibuf, 1);
+      }
+    }
     if (hc->http->cb(loop, hc, eob, EV_READ | EV_CUSTOM) == 0) {
       hc->eob = 1;
       // if (!hc->body_chnk && calc_len) set_content_length(hc);
@@ -736,11 +610,6 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
     break;
 
   case HM_POST:
-    /* Since the user callback may be called several times to complete
-     * the request, we need to make sure that form parsing is done at the
-     * very first time only.
-     *
-     * TODO: we need to call form_* function iff (hc->body_chnk == 0) */
     if (hc->form) {
       if (form_parse(hc->form, &hc->ibuf, eob)) {
         /* If we've parsed the form for the callback, the callback MUST
@@ -774,7 +643,6 @@ prepare_recv_req(struct ev_loop *loop, struct ev_httpconn *hc)
   ev_httpconn_reset(hc, 0);
 }
 
-
 static __inline__ void
 prepare_send_rsp(struct ev_loop *loop, ev_httpconn *hc)
 {
@@ -804,6 +672,28 @@ prepare_send_rsp(struct ev_loop *loop, ev_httpconn *hc)
 }
 
 
+static __inline__ void
+ev_httpconn_new_form(ev_httpconn *hc)
+{
+#ifdef EVHTTP_HANDLE_FORM
+  if (1 || hc->method == HM_POST || hc->method == HM_PUT) {
+    if (hc->form)
+      form_free(hc->form);
+    else
+      hc->form = &hc->form_;
+    form_init(hc->form);
+
+    if (form_set_parser(hc->form, &hc->req_hdrs) == -1) {
+      /* If we can't prepare right form parser, keep going without
+       * form handling routines */
+      form_free(hc->form);
+      hc->form = 0;
+    }
+  }
+#endif
+}
+
+
 static __inline__ int
 prepare_recv_body(struct ev_loop *loop, ev_httpconn *hc)
 {
@@ -824,23 +714,7 @@ prepare_recv_body(struct ev_loop *loop, ev_httpconn *hc)
       return 0;
     }
   }
-
-#ifdef EVHTTP_HANDLE_FORM
-  if (hc->method == HM_POST || hc->method == HM_PUT) {
-    if (hc->form)
-      form_free(hc->form);
-    else
-      hc->form = &hc->form_;
-    form_init(hc->form);
-
-    if (form_set_parser(hc->form, &hc->req_hdrs) == -1) {
-      /* If we can't prepare right form parser, keep going without
-       * form handling routines */
-      form_free(hc->form);
-      hc->form = 0;
-    }
-  }
-#endif
+  ev_httpconn_new_form(hc);
 
   return 1;
 }
@@ -890,6 +764,7 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
       buffer_advance(&hc->ibuf, found.node, found.ptr, CRLF2LEN);
 
       if (hc->method == HM_GET || hc->method == HM_HEAD) {
+        ev_httpconn_new_form(hc);
         do_callback(loop, hc, 1);
         prepare_send_rsp(loop, hc);
         goto send_rsp;
@@ -980,12 +855,8 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
         if (hc->body_rest <= 0) {
           hc->state = HC_SEND_BODY;
 
-          hc->body_chnk = (hc->eob == 0);
-
-          if (hc->body_chnk)
-            buffer_prependf(&hc->obuf, "%zu\r\n", BUFFER_SIZE(&hc->obuf));
           hc->body_size = hc->body_rest = buffer_size(&hc->obuf, NULL);
-
+          hc->body_chnk = (hc->eob == 0);
           goto send_body;
         }
         return;
@@ -993,255 +864,47 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
     }
     else if (hc->state == HC_SEND_BODY) {
     send_body:
-      written = buffer_flush(&hc->obuf, NULL, NULL, hc->io.fd);
-      if (written == -1) {
-        xdebug(errno, "buffer_flush() failed");
-        ev_httpconn_stop(loop, hc);
-        return;
+      /* TODO: call buffer_flush() here. */
+      if (hc->body_chnk) {
+        // TODO: add the chunk size in backpad area of the first bufnode
+        //       in OBUF.
+        abort();                  /* TODO: implement */
       }
-      hc->body_rest -= written;
-      if (hc->body_rest <= 0) {
-        if (hc->eob) {
-          if (hc->rsp_disconnect) {
-            ev_httpconn_stop(loop, hc);
-            return;
-          }
-          else {
-            prepare_recv_req(loop, hc);
-            if (buffer_size(&hc->ibuf, NULL) > 0)
-              goto recv_req;
-            /* We don't have any remaining bytes in the IBUF.
-             * Thus, waiting for libev to send EV_READ. */
-            return;
-          }
-        }
-        else {
-          /* We've send everything we have so far, but the whole
-           * response body is not complete yet. so ask the callback
-           * to fill more body part. */
-          do_callback(loop, hc, 1);
-
-#ifdef VERIFY_THIS_FOR_CHUNKED_ENCODING
-          /* TODO */
-          buffer_prependf(&hc->obuf, "%zu\r\n", BUFFER_SIZE(&hc->obuf));
-
-          if (do_callback_returns_with_eob_set) {
-            buffer_append(&hc->obuf, "0\r\n\r\n");
-          }
-          hc->body_size = hc->body_rest = BUFFER_SIZE(&hc->obuf);
-#endif      /* 0 */
+      else {
+        written = buffer_flush(&hc->obuf, NULL, NULL, hc->io.fd);
+        if (written == -1) {
+          xdebug(errno, "buffer_flush() failed");
+          ev_httpconn_stop(loop, hc);
           return;
         }
-      } /* if (hc->body_rest <= 0) else ... */
-    }   /* hc->state == HC_SEND_BODY */
-  }     /* EV_WRITE */
-}
-
-
-static void
-ev_httpconn_read_cb(struct ev_loop *loop, ev_io *w, int revents)
-{
-  ev_httpconn *hc = (ev_httpconn *)(((char *)w) - offsetof(ev_httpconn, io));
-  bufpos found;
-  ssize_t readch;
-  int eof;
-
-  if (!(revents & EV_READ)) {
-    xdebug(0, "ev_httpconn_read_cb: receives revents %x", revents);
-    return;
-  }
-
-  assert(hc->state == HC_RECV_REQ || hc->state == HC_RECV_BODY);
-
-  hc->acc_time = ev_now(loop);
-
-  if (hc->state == HC_RECV_REQ) {
-    readch = buffer_fill_fd(&hc->ibuf, w->fd, hc->http->ibufsize, &eof);
-    if (readch == -1) {
-      if (buffer_size(&hc->ibuf, 0) > 0 || errno != ECONNRESET)
-        xdebug(errno, "read failed (errno=%d)", errno);
-      ev_httpconn_stop(loop, hc);
-      return;
-    }
-#if 0
-    else if (eof) {
-#ifndef NDEBUG
-      if (buffer_size(&hc->ibuf, NULL) > 0)
-        xdebug(0, "premature EOF");
-#endif
-      ev_httpconn_stop(loop, hc);
-      return;
-    }
-#endif
-
-    /* TODO: implement 5th arg of buffer_find()? */
-    if (!buffer_find(&hc->ibuf, CRLF2, CRLF2LEN, &found, NULL)) {
-      if (eof) {
-#ifndef NDEBUG
-        if (buffer_size(&hc->ibuf, NULL) > 0)
-          xdebug(0, "premature EOF");
-#endif
-        ev_httpconn_stop(loop, hc);
-      }
-      return;
-    }
-
-    buffer_copy(&hc->hdr_pool, &hc->ibuf, &found);
-
-    {
-      /* Do we need to keep the ptr to the below xobs chunk?  It will
-       * be release when the request is processed anyway. */
-      // size_t hdrs_sz = xobs_object_size(&hc->hdr_pool);
-      char *req;
-      xobs_1grow(&hc->hdr_pool, '\0');
-      req = xobs_finish(&hc->hdr_pool);
-      load_req_line_headers(hc, req);
-    }
-
-    buffer_advance(&hc->ibuf, found.node, found.ptr, CRLF2LEN);
-
-    if (hc->method != HM_POST || hc->method != HM_PUT) {
-      do_callback(loop, hc, 1);
-
-      hc->state = HC_SEND_RSP;
-      ev_httpconn_toggle_readwrite(loop, hc);
-      return;
-    }
-
-    hc->state = HC_RECV_BODY;
-
-    if (!set_reqbody_params(hc)) {
-      hc->state = HC_SEND_RSP;
-      ev_httpconn_toggle_readwrite(loop, hc);
-      return;
-    }
-
-    goto recv_body;
-  }
-  else if (hc->state == HC_RECV_BODY) {
-    if (buffer_fill_fd(&hc->ibuf, w->fd, hc->http->ibufsize, &eof) == -1) {
-      xdebug(errno, "read failed (errno=%d)", errno);
-      ev_httpconn_stop(loop, hc);
-      return;
-    }
-    else if (eof) {
-      xdebug(0, "premature EOF");
-      ev_httpconn_stop(loop, hc);
-      return;
-    }
-
-  recv_body: /* TODO: am I sure that this label is after buffer_fill_fd()? */
-
-    if (hc->body_chnk) {            /* chunked encoding */
-      abort();                      /* TODO: implement */
-    }
-    else {
-      if (hc->body_rest > 0) {
-        bufpos pos;
-        size_t remains = buffer_seek(&hc->ibuf, hc->body_rest, SEEK_SET, &pos);
-        if (remains == 0) {
-          // we got the whole body.
-          do_callback(loop, hc, 1);
-        }
-        else {
-          // we have the partial body.
-          do_callback(loop, hc, 0);
-        }
-        buffer_advance(&hc->ibuf, pos.node, pos.ptr, 0);
-        hc->body_rest -= remains;
-      }
-    }
-  }
-#if 0
-    /*
-      first:
-         condition: (body_size == -1 && chunk_size == -1)
-
-         body_size(-1), body_rest(-1), chunk_size(-1), chunk_rest(-1)
-
-         if (te[-1] == chunked) {
-           chunk_size = get_chunk_size(inbuf);
-           if (not_complete)
-             feed EV_READ, return
-
-           // body_size(-1), body_rest(-1), chunk_size(NN), chunk_rest(MM)
-         }
-         else {
-           body_size = Content-Length;
-           body_rest = count_inbuf();
-
-           // body_size(AA), body_rest(BB), chunk_size(-1), chunk_rest(-1)
-         }
-
-      subsequent calls:
-        condition: (body_size != -1 || chunk_size != -1)
-
-        if (body_size) {
-
-        }
-     */
-    val = hdrstore_get(&hc->req_hdrs, "CONTENT-LENGTH");
-    if (val)
-      hc->body_size = atoi(val);
-
-    if (hc->req_body_size == -1) {
-      /* TODO: check if Transfer-Encoding has at least HTTP_TE_CHUNKED */
-      if (get_te(hc, -1) != HTTP_TE_CHUNKED) {
-        /* 411 Length Required */
-        set_response(hc, HTTP_LENGTH_REQUIRED, 1);
-        hc->state = HC_SEND_RSP;
-        // toggle_readwrite
-        return;
-      }
-      else {
-        /* TODO: need to receive chunked request body using hc->req_next_chunk */
-#if 0
-        if (hc->req_chunk_remains) { /* we are reading middle of a chunk */
-        }
-        else {
-          bufpos pos;
-          hc->req_chunk_size = next_chunk_size(hc->inbuf, &pos);
-          hc->req_body_rest = hc->req_chunk_size;
-
-          if (hc->req_chunk_size == 0) { /* we are done */
-            if (hc->req_body_rest > 0) {
-              // TODO: feed ibuf[...hc->req_body_rest]
-            }
-            hc->state = HC_SEND_RSP;
-            // TODO: toggle_readwrite
-          }
-          else {
-            remains = buffer_byte_count(&hc->ibuf, pos);
-            if (remains < hc->req_body_rest) {
-              /* we haven't received a complete chunk */
-              // TODO: feed ibuf[pos...end-of-buffer] to user CB.
-              hc->req_body_rest -= remains;
+        hc->body_rest -= written;
+        if (hc->body_rest <= 0) {
+          if (hc->eob) {
+            if (hc->rsp_disconnect) {
+              ev_httpconn_stop(loop, hc);
+              return;
             }
             else {
-              // TODO: feed ibuf[pos...pos + hc->req_body_rest]
-              hc->req_body_rest = 0;
-              // TODO: feed EV_READ
+              prepare_recv_req(loop, hc);
+              if (buffer_size(&hc->ibuf, NULL) > 0)
+                goto recv_req;
+              /* We don't have any remaining bytes in the IBUF.
+               * Thus, waiting for libev to send EV_READ. */
+              return;
             }
           }
-#endif  /* 0 */
+          else {
+            /* We've send everything we have so far, but the whole
+             * response body is not complete yet. so ask the callback
+             * to fill more body part. */
+            do_callback(loop, hc, 1);
+            /* TODO */
+            return;
+          }
         }
-      }
-    }
-    else {
-      remains = buffer_byte_count(&hc->ibuf, NULL);
-
-      if (remains >= hc->req_body_size) {
-        /* we've received a complete request body */
-        // feed ibuf[...remains] to user CB
-        hc->state = HC_SEND_RSP;
-        // TODO: toggle_readwrite
-      }
-      else {
-
-      }
-    }
-  }
-#endif  /* 0 */
+      } /* for identity TE */
+    }   /* hc->state == HC_SEND_BODY */
+  }     /* EV_WRITE */
 }
 
 

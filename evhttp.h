@@ -25,6 +25,10 @@
 
 #include <pthread.h>
 
+#ifdef EVHTTP_HANDLE_FORM
+#include <pcre.h>
+#endif
+
 #if 0
 #include "xobstack.h"
 #include "hdrstore.h"
@@ -32,6 +36,20 @@
 #endif  /* 0 */
 
 #include "evhttpconn.h"
+
+/* This indirect using of extern "C" { ... } makes Emacs happy */
+#ifndef BEGIN_C_DECLS
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
+#endif /* BEGIN_C_DECLS */
+
+BEGIN_C_DECLS
+
 /*
  * When REVENTS contains EV_TIMER, it means that timeout occurred.  if
  * the user returns zero, it means that user wants to let HTTP module
@@ -117,6 +135,11 @@ struct ev_http {
   int obufsize;
   int ibufsize;
 
+#ifdef EVHTTP_HANDLE_FORM
+  pcre *boundary;
+  pcre_extra *boundary_ext;
+#endif
+
   struct httpworker *workers;
   size_t nworkers;
 };
@@ -128,5 +151,6 @@ void ev_http_start(struct ev_loop *loop, ev_http *http);
 void ev_http_break(struct ev_loop *loop, ev_http *http);
 void ev_http_stop(struct ev_loop *loop, ev_http *http);
 
+END_C_DECLS
 
 #endif /* EVHTTP_H__ */

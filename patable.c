@@ -21,34 +21,12 @@
 #include <errno.h>
 #include <limits.h>
 
-#define USE_PCRE
-
-#ifdef USE_PCRE
-#include <pcre.h>
-
-#ifndef PCRE_STUDY_JIT_COMPILE
-#define PCRE_STUDY_JIT_COMPILE 0
-#endif
-#else
-#include <regex.h>
-#endif
-
+#include "evhttpconn.h"
 #include "xerror.h"
 #include "xobstack.h"
 #include "patable.h"
 
 // typedef void (*pat_callback)(int grpc, char *grpv[]);
-
-struct pentry {
-#ifdef USE_PCRE
-  pcre *re;
-  pcre_extra *ext;
-#else
-  int used;
-  regex_t re;
-#endif
-  void *data;
-};
 
 #define OVECTOR_MAX     63      /* should be a multiple of three */
 
@@ -78,13 +56,13 @@ patable_free_groups(struct xobs *pool, char **grpv)
 }
 
 
-#ifdef USE_PCRE
+#ifdef PATABLE_USE_PCRE
 int
 patable_add(struct patable *table, const char *pattern,
             const void *data)
 {
   int i;
-  struct pentry *p;
+  struct patentry *p;
   size_t newsz;
   int ecode, eoff;
   const char *emsg;
@@ -185,14 +163,14 @@ patable_groups(struct xobs *pool, size_t ngroup,
   return grpv;
 }
 
-#else  /* USE_PCRE */
+#else  /* PATABLE_USE_PCRE */
 
 int
 patable_add(struct patable *table, const char *pattern,
             const void *data)
 {
   int i;
-  struct pentry *p;
+  struct patentry *p;
   size_t newsz;
   int ecode;
 
@@ -273,7 +251,7 @@ patable_groups(struct xobs *pool, size_t ngroup,
   return grpv;
 }
 
-#endif  /* USE_PCRE */
+#endif  /* PATABLE_USE_PCRE */
 
 
 
@@ -341,7 +319,7 @@ int
 patable_init(struct patable *pat)
 {
   int i;
-  struct pentry *p;
+  struct patentry *p;
 
   pat->cur = 0;
   pat->npat = 16;
@@ -350,7 +328,7 @@ patable_init(struct patable *pat)
     return 0;
 
   for (i = 0; i < pat->npat; i++) {
-#ifdef USE_PCRE
+#ifdef PATABLE_USE_PCRE
     pat->pat[i].re = 0;
     pat->pat[i].ext = 0;
 #else
@@ -368,7 +346,7 @@ patable_release(struct patable *pat)
   int i;
 
   for (i = 0; i < pat->npat; i++) {
-#ifdef USE_PCRE
+#ifdef PATABLE_USE_PCRE
     pcre_free(pat->pat[i].re);
     pat->pat[i].re = 0;
     pcre_free_study(pat->pat[i].ext);
@@ -464,7 +442,7 @@ main(int argc, char *argv[])
 
     for (i = 0; i < 1000000; i++) {
       int ngroup;
-#ifdef USE_PCRE
+#ifdef PATABLE_USE_PCRE
       int ovector[80];
 #else
       regmatch_t ovector[40];

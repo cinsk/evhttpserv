@@ -25,12 +25,30 @@
 #include "uthash.h"
 #include "hdrstore.h"
 
+/* This indirect using of extern "C" { ... } makes Emacs happy */
+#ifndef BEGIN_C_DECLS
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
+#endif /* BEGIN_C_DECLS */
+
+BEGIN_C_DECLS
+
 #define FP_URLENCODED   1
 #define FP_MULTIPART    2
 
-#define FORM_NIL        0
-#define FORM_STRING     1
-#define FORM_FILE       2
+#define FORMENT_NIL        0
+#define FORMENT_STRING     1
+#define FORMENT_FILE       2
+
+#define FORMENT_TYPE(fe)        ((fe)->type)
+#define FORMENT_KEY(fe)         ((fe)->k)
+#define FORMENT_AS_STRING(fe)   ((fe)->v.str)
+#define FORMENT_AS_FILE(fe)     ((fe)->v.file)
 
 struct mpparser;
 
@@ -98,5 +116,7 @@ int form_import_buffer(struct xobs *pool, struct form_entry **root,
                        const char *key,
                        struct buffer *source, bufpos *from);
 #endif  /* 0 */
+
+END_C_DECLS
 
 #endif /* FORM_H__ */
