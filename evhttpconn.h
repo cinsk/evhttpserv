@@ -141,6 +141,7 @@ struct ev_httpconn {
   int eob;                      /* nonzero means that end of response body. */
 
   size_t *refcnt;
+  int cb_called;                /* number of calls of callback */
 };
 typedef struct ev_httpconn ev_httpconn;
 

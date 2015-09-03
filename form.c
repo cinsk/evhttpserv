@@ -85,6 +85,7 @@ form_init(struct form *f)
   f->root = NULL;
   f->parser = nil_parser;
   f->padata = NULL;
+  f->parsed = 0;
 
   return 1;
 }
@@ -123,6 +124,11 @@ form_parse(struct form *f, struct buffer *b, int eos)
   int ret;
 
   ret = form_parser_parse(f, b, eos);
+
+  /* regardless parsing was successful, f->parsed should be set
+   * because, once the form parsed, the parsing function should not be
+   * called again. See do_callback() for more */
+  f->parsed = 1;
 
   return ret;
 #if 0

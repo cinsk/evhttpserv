@@ -66,6 +66,11 @@ BEGIN_C_DECLS
  * then return from the callback with nonzero value.  If the callback
  * returns with zero, it means that the response body is completed.
  *
+ *   If the user provide the complete response body when the callback
+ *   was called at the first time, evhttpserv module will set
+ *   CONTENT-LENGTH header for you if it was not set.  Otherwise, the
+ *   user should provide CONTENT-LENGTH in the callback.
+ *
  * How to receive the response body:
  *
  *   If EOB is nonzero, then the whole request body is stored in
@@ -153,6 +158,7 @@ typedef struct ev_http ev_http;
 int ev_http_init(ev_http *http, size_t nworkers, http_callback cb, char *address,
                  int port, int ctrl_port);
 
+int ev_http_set_site(ev_http *http, const char *site_root);
 int ev_http_dispatcher_add(ev_http *http, const char *pattern, http_callback cb);
 
 void ev_http_start(struct ev_loop *loop, ev_http *http);

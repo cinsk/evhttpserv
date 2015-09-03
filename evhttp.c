@@ -33,6 +33,8 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 
+#include <dlfcn.h>
+
 #include "common.h"
 #include "evhttp.h"
 #include "evhttpconn.h"
@@ -314,6 +316,73 @@ ev_http_init(ev_http *http, size_t nworkers, http_callback cb, char *address,
   }
 
   patable_init(&http->dispatcher);
+  return 1;
+}
+
+
+int
+ev_http_set_site(ev_http *http, const char *site_root)
+{
+  chdir(site_root);
+  FILE *fp;
+  char *line = 0;
+  size_t linecap = 0;
+  size_t linelen;
+  ssize_t readch;
+  int ovec[80];
+  int ngroups;
+  int re_err, re_offset;
+  const char *re_errstr;
+
+  pcre *pat = pcre_compile2("^[[:space:]]*([^ ]+)[[:space:]]+([^ ]+)[[:space:]]+(.*)$",
+                            PCRE_ANCHORED, &re_err, &re_errstr, &re_offset, NULL);
+  if (!pat)
+    xerror(1, 0, "pcre_compile2() failed: %s", re_errstr);
+
+  fp = fopen("dispatcher.conf", "r");
+
+  while ((readch = getline(&line, &linecap, fp)) >= 0) {
+    if (!line)
+      break;
+    if (line[0] == '#')
+       continue;
+    linelen = strlen(line);
+    if (line[linelen - 1] == '\n')
+      line[linelen - 1] = '\0';
+    else if (line[linelen - 2] == '\r' && line[linelen - 1] == '\n')
+      line[linelen - 2] = '\0';
+
+    ngroups = pcre_exec(pat, NULL, line, linelen, 0, 0, ovec, sizeof(ovec) / sizeof(ovec[0]));
+    if (ngroups != 4)
+      continue;
+    *(line + ovec[3]) = '\0';
+    *(line + ovec[5]) = '\0';
+    *(line + ovec[7]) = '\0';
+
+    // printf("line: file(%s) name(%s) pattern: %s\n", line + ovec[2], line + ovec[4], line + ovec[6]);
+
+    {
+      const char *dlfile = line + ovec[2];
+      const char *sym = line + ovec[4];
+      const char *pattern = line + ovec[6];
+      void *handle;
+      http_callback cb;
+
+      handle = dlopen(dlfile, RTLD_NOW | RTLD_LOCAL);
+      if (!handle)
+        xerror(1, 0, "cannot open shared object %s: %s", dlfile, dlerror());
+
+      cb = (http_callback)dlsym(handle, sym);
+      if (!cb)
+        xerror(1, 0, "unresolved symbol %s in %s: %s", sym, dlfile, dlerror());
+
+      ev_http_dispatcher_add(http, pattern, cb);
+    }
+  }
+
+  free(line);
+  pcre_free(pat);
+
   return 1;
 }
 

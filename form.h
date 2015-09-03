@@ -89,9 +89,12 @@ struct form {
   struct fparser parser;
   void *padata;
   struct xobs pool;
+  int parsed;
 };
 
 int form_init(struct form *f);
+
+#define form_is_parsed(f)       ((f)->parsed)
 
 /* return 0 on success, -1 on failure */
 int form_set_parser(struct form *f, struct hdrstore *req);

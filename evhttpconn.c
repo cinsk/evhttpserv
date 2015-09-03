@@ -173,6 +173,8 @@ ev_httpconn_init(ev_httpconn *hc, struct ev_http *http,
 
   hc->form = 0;
 
+  hc->cb_called = 0;
+
   return 1;
 }
 
@@ -578,10 +580,15 @@ load_req_line_headers(ev_httpconn *hc, char *req)
 static __inline__ void
 set_content_length(ev_httpconn *hc)
 {
-  assert(hc->eob == 1);
   assert(xobs_object_size(&hc->hdr_pool) == 0);
-  xobs_sprintf(&hc->hdr_pool, "%zu", buffer_size(&hc->obuf, NULL));
-  hdrstore_set(&hc->rsp_hdrs, "Content-Length", xobs_finish(&hc->hdr_pool), 0);
+
+  if (hc->eob == 1 && hc->cb_called == 1) {
+    if (hdrstore_get(&hc->rsp_hdrs, "CONTENT-LENGTH", NULL) == 0) {
+      xobs_sprintf(&hc->hdr_pool, "%zu", buffer_size(&hc->obuf, NULL));
+      hdrstore_set(&hc->rsp_hdrs, "CONTENT-LENGTH",
+                   xobs_finish(&hc->hdr_pool), 0);
+    }
+  }
 }
 
 
@@ -625,25 +632,32 @@ do_callback(struct ev_loop *loop, ev_httpconn *hc, int eob)
         form_parse(hc->form, &hc->ibuf, 1);
       }
     }
+    hc->cb_called++;
     if (cb(loop, hc, eob, EV_READ | EV_CUSTOM, grpc, grpv) == 0) {
       hc->eob = 1;
       // if (!hc->body_chnk && calc_len) set_content_length(hc);
+      set_content_length(hc);
     }
     break;
 
   case HM_POST:
-    if (hc->form) {
-      if (form_parse(hc->form, &hc->ibuf, eob)) {
-        /* If we've parsed the form for the callback, the callback MUST
-         * return zero (job finished).  The callback should not return
-         * nonzero value */
-        cb(loop, hc, eob, EV_READ | EV_CUSTOM, grpc, grpv);
-        hc->eob = 1;
+    if (hc->form) {             /* hc->form always nonzero? */
+      if (!form_is_parsed(hc->form)) {
+        if (!form_parse(hc->form, &hc->ibuf, eob)) {
+          /* TODO: What now? */
+        }
       }
-    }
-    else {
+      hc->cb_called++;
       if (cb(loop, hc, eob, EV_READ | EV_CUSTOM, grpc, grpv) == 0) {
         hc->eob = 1;
+        set_content_length(hc);
+      }
+    }
+    else {                 /* dead code, hc->form is always nonzero */
+      hc->cb_called++;
+      if (cb(loop, hc, eob, EV_READ | EV_CUSTOM, grpc, grpv) == 0) {
+        hc->eob = 1;
+        set_content_length(hc);
       }
     }
     break;
@@ -824,7 +838,6 @@ ev_httpconn_io_cb(struct ev_loop *loop, ev_io *w, int revents)
           if (remains == 0) {
             // we got the whole body.
             do_callback(loop, hc, 1);
-            /* Now, we sent all request body to the do_callback */
             prepare_send_rsp(loop, hc);
             goto send_rsp;
           }

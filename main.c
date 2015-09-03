@@ -81,8 +81,9 @@ main(int argc, char *argv[])
   ev_http_init(&http, atoi(argv[2]), def_callback, "0.0.0.0", atoi(argv[1]), -1);
   ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
 
+  ev_http_set_site(&http, "site");
   ev_http_dispatcher_add(&http, "/db/(.*)", db_callback);
-  ev_http_dispatcher_add(&http, "/mgr/(.*)/(.*)", mgr_callback);
+  //ev_http_dispatcher_add(&http, "/mgr/(.*)/(.*)", mgr_callback);
 
   ev_http_start(loop, &http);
   ev_signal_start(loop, &sigint_watcher);
@@ -117,6 +118,7 @@ handle_req(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents,
       }
 
       w->rsp_code = HTTP_OK;
+      hdrstore_set(&w->rsp_hdrs, "Content-Type", "text/html", 0);
       xdebug(0, "Request(%s, %s): %s", w->method_string, w->version, w->uri);
       buffer_printf(&w->obuf, "<html><body><p>hello</p>\n");
 
@@ -136,18 +138,21 @@ handle_req(struct ev_loop *loop, struct ev_httpconn *w, int eob, int revents,
       // hdrstore_set(&w->rsp_hdrs, "Content-Length", v, 0);
       // hdrstore_set(&w->rsp_hdrs, "Connection", "Keep-Alive", 0);
 
-      xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
-      hdrstore_set(&w->rsp_hdrs, "Content-Length",
-                   xobs_finish(&w->hdr_pool), 0);
+      /* hdrstore_set(&w->rsp_hdrs, "Content-Type", "text/html", 0); */
+      /* xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL)); */
+      /* hdrstore_set(&w->rsp_hdrs, "Content-Length", */
+      /*              xobs_finish(&w->hdr_pool), 0); */
 
     }
     else if (w->method == HM_POST) {
+      hdrstore_set(&w->rsp_hdrs, "Content-Type", "text/html", 0);
+
       if (w->form)
         form_dump(stderr, w->form);
 
-      xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL));
-      hdrstore_set(&w->rsp_hdrs, "Content-Length",
-                   xobs_finish(&w->hdr_pool), 0);
+      /* xobs_sprintf(&w->hdr_pool, "%zd", buffer_size(&w->obuf, NULL)); */
+      /* hdrstore_set(&w->rsp_hdrs, "Content-Length", */
+      /*              xobs_finish(&w->hdr_pool), 0); */
       w->rsp_code = HTTP_OK;
     }
     else {
